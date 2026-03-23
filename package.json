@@ -1,7 +1,7 @@
 {
-  "name": "decky-plugin-template",
+  "name": "deckyzone",
   "version": "0.0.1",
-  "description": "A template to quickly create decky plugins from scratch, based on TypeScript and webpack",
+  "description": "TBD",
   "type": "module",
   "scripts": {
     "build": "rollup -c",
@@ -10,25 +10,24 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/SteamDeckHomebrew/decky-plugin-template.git"
+    "url": "git+https://github.com/felixhirschfeld/DeckyZone.git"
   },
   "keywords": [
     "decky",
     "plugin",
-    "plugin-template",
-    "steam-deck",
-    "deck"
+    "zotac",
+    "inputplumber",
+    "zone"
   ],
-  "author": "You <you@you.tld>",
+  "author": "Felix Hirschfeld",
   "license": "BSD-3-Clause",
   "bugs": {
-    "url": "https://github.com/SteamDeckHomebrew/decky-plugin-template/issues"
+    "url": "https://github.com/felixhirschfeld/DeckyZone/issues"
   },
-  "homepage": "https://github.com/SteamDeckHomebrew/decky-plugin-template#readme",
+  "homepage": "https://github.com/felixhirschfeld/DeckyZone#readme",
   "devDependencies": {
     "@decky/rollup": "^1.0.2",
     "@decky/ui": "^4.11.0",
-    "@rollup/rollup-linux-x64-musl": "^4.53.3",
     "@types/react": "19.1.1",
     "@types/react-dom": "19.1.1",
     "@types/webpack": "^5.28.5",
