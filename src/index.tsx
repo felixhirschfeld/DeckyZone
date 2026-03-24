@@ -35,7 +35,7 @@ const setRumbleIntensity = callable<[number], PluginSettings>(
 const testRumble = callable<[], boolean>("test_rumble");
 
 const DEFAULT_STARTUP_DESCRIPTION =
-  "Reapplies the Zotac controller target after boot.";
+  "Restores the Zotac Steam Deck-style controller targets after boot.";
 const DEFAULT_RUMBLE_DESCRIPTION =
   "Keeps reapplying your preferred vibration intensity to prevent other services from overriding it.";
 const RUMBLE_UNAVAILABLE_MESSAGE =
@@ -224,7 +224,7 @@ function Content() {
     <PanelSection title="Controller">
       <PanelSectionRow>
         <ToggleField
-          label="Controller Fix"
+          label="Startup Target"
           checked={settings.startupApplyEnabled}
           onChange={(value: boolean) => void handleStartupToggleChange(value)}
           disabled={savingStartup}

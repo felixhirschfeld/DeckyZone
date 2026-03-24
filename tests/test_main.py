@@ -152,7 +152,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             status,
-            {"state": "applied", "message": "Startup mode re-applied: xbox-elite."},
+            {"state": "applied", "message": "Startup mode re-applied: deck-uhid."},
         )
         self.assertEqual(len(commands), 2)
         self.assertEqual(
@@ -177,7 +177,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "SetTargetDevices",
                 "as",
                 "3",
-                "xbox-elite",
+                "deck-uhid",
                 "keyboard",
                 "mouse",
             ],
@@ -849,7 +849,7 @@ class FrontendSourceTests(unittest.TestCase):
 
         self.assertIn('title="Controller"', source)
         self.assertIn("ButtonItem", source)
-        self.assertIn('label="Controller Fix"', source)
+        self.assertIn('label="Startup Target"', source)
         self.assertIn('label="Vibration Intensity"', source)
         self.assertIn('label="Vibration intensity"', source)
         self.assertIn('testRumble = callable<[], boolean>("test_rumble")', source)
@@ -857,7 +857,7 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn("rumbleMessageKind", source)
         self.assertIn('color: rumbleMessageKind === "error" ? "red" : undefined', source)
         self.assertIn(
-            'Reapplies the Zotac controller target after boot.',
+            'Restores the Zotac Steam Deck-style controller targets after boot.',
             source,
         )
         self.assertIn(
@@ -883,6 +883,7 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertNotIn("<strong>State:</strong>", source)
         self.assertNotIn('title="Startup Mode"', source)
         self.assertNotIn('title="Controller Fix"', source)
+        self.assertNotIn('label="Controller Fix"', source)
         self.assertNotIn('label="Apply controller fix on startup"', source)
         self.assertNotIn('label="Enable startup controller fix"', source)
         self.assertNotIn('label="Enable vibration intensity fix"', source)
