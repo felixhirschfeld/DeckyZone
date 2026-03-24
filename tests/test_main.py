@@ -362,17 +362,20 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_sync_missing_glyph_fix_target_applies_xbox_elite_for_enabled_game(self):
         commands = []
+        grabbed = []
         service = main.DeckyZoneService(
             command_runner=lambda command, **kwargs: commands.append(command)
             or _CompletedProcess(returncode=0),
             sleep=_async_noop,
             read_text=lambda path: "",
         )
+        service._grab_zotac_mouse_device = lambda: grabbed.append("grab") or True
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
         result = await service.sync_missing_glyph_fix_target("123")
 
         self.assertTrue(result)
+        self.assertEqual(grabbed, ["grab"])
         self.assertEqual(
             commands,
             [
@@ -392,20 +395,61 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_sync_missing_glyph_fix_target_restores_startup_mode_when_game_ends(self):
+    async def test_sync_missing_glyph_fix_target_releases_zotac_mouse_device_when_trackpads_enabled(self):
         commands = []
+        released = []
         service = main.DeckyZoneService(
             command_runner=lambda command, **kwargs: commands.append(command)
             or _CompletedProcess(returncode=0),
             sleep=_async_noop,
             read_text=lambda path: "",
         )
+        service._grab_zotac_mouse_device = lambda: True
+        service._release_zotac_mouse_device = lambda: released.append("release") or True
+        main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
+
+        await service.sync_missing_glyph_fix_target("123")
+        main.plugin_settings.set_missing_glyph_fix_trackpads_disabled("123", False)
+
+        result = await service.sync_missing_glyph_fix_target("123")
+
+        self.assertTrue(result)
+        self.assertEqual(released, ["release"])
+        self.assertEqual(
+            commands[0],
+            [
+                "busctl",
+                "call",
+                "org.shadowblip.InputPlumber",
+                main.INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "SetTargetDevices",
+                "as",
+                "3",
+                "xbox-elite",
+                "keyboard",
+                "mouse",
+            ],
+        )
+
+    async def test_sync_missing_glyph_fix_target_restores_startup_mode_when_game_ends(self):
+        commands = []
+        released = []
+        service = main.DeckyZoneService(
+            command_runner=lambda command, **kwargs: commands.append(command)
+            or _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._grab_zotac_mouse_device = lambda: True
+        service._release_zotac_mouse_device = lambda: released.append("release") or True
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
         await service.sync_missing_glyph_fix_target("123")
         result = await service.sync_missing_glyph_fix_target("0")
 
         self.assertTrue(result)
+        self.assertEqual(released, ["release"])
         self.assertEqual(
             commands[-1],
             [
@@ -459,6 +503,22 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "message": "Startup mode apply is disabled.",
             },
         )
+
+    async def test_resolve_zotac_mouse_device_path_prefers_named_event_device(self):
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: {
+                "/sys/class/input/event12/device/name": "Generic Mouse",
+                "/sys/class/input/event15/device/name": "ZOTAC Gaming Zone Mouse",
+            }[path],
+        )
+        service._get_zotac_mouse_candidate_paths = lambda: [
+            "/dev/input/event12",
+            "/dev/input/event15",
+        ]
+
+        self.assertEqual(service._resolve_zotac_mouse_device_path(), "/dev/input/event15")
 
     async def test_set_rumble_intensity_clamps_values(self):
         service = main.DeckyZoneService(
@@ -791,15 +851,41 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             main.plugin_settings.set_missing_glyph_fix_enabled("123", True),
-            {"123": True},
+            {"123": {"disableTrackpads": True}},
         )
         self.assertTrue(main.plugin_settings.get_missing_glyph_fix_enabled("123"))
+        self.assertTrue(main.plugin_settings.get_missing_glyph_fix_trackpads_disabled("123"))
+
+        self.assertEqual(
+            main.plugin_settings.set_missing_glyph_fix_trackpads_disabled("123", False),
+            {"123": {"disableTrackpads": False}},
+        )
+        self.assertFalse(main.plugin_settings.get_missing_glyph_fix_trackpads_disabled("123"))
 
         self.assertEqual(
             main.plugin_settings.set_missing_glyph_fix_enabled("123", False),
             {},
         )
         self.assertFalse(main.plugin_settings.get_missing_glyph_fix_enabled("123"))
+
+    async def test_plugin_settings_migrates_legacy_missing_glyph_fix_bool_entries(self):
+        _FAKE_SETTINGS_STORE["missingGlyphFixGames"] = {
+            "123": True,
+            "456": False,
+        }
+
+        self.assertEqual(
+            main.plugin_settings.get_missing_glyph_fix_games(),
+            {"123": {"disableTrackpads": True}},
+        )
+        self.assertTrue(main.plugin_settings.get_missing_glyph_fix_enabled("123"))
+        self.assertTrue(main.plugin_settings.get_missing_glyph_fix_trackpads_disabled("123"))
+
+    async def test_set_missing_glyph_fix_trackpads_disabled_ignores_unknown_games(self):
+        self.assertEqual(
+            main.plugin_settings.set_missing_glyph_fix_trackpads_disabled("123", False),
+            {},
+        )
 
     async def test_set_startup_apply_enabled_sets_plain_disabled_status_before_apply(self):
         service = main.DeckyZoneService(
@@ -973,25 +1059,19 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn('title="Controller"', source)
         self.assertIn("ButtonItem", source)
         self.assertIn("Router.MainRunningApp", source)
-        self.assertIn('label="Startup Target"', source)
-        self.assertIn('label="Missing Glyph Fix"', source)
-        self.assertIn('label="Vibration Intensity"', source)
-        self.assertIn('label="Vibration intensity"', source)
-        self.assertIn(
-            'setMissingGlyphFixEnabled = callable<[string, boolean], PluginSettings>(',
-            source,
-        )
-        self.assertIn(
-            '"set_missing_glyph_fix_enabled"',
-            source,
-        )
-        self.assertIn(
-            'syncMissingGlyphFixTarget = callable<[string], boolean>("sync_missing_glyph_fix_target")',
-            source,
-        )
-        self.assertIn('testRumble = callable<[], boolean>("test_rumble")', source)
-        self.assertIn('"Test Rumble"', source)
+        self.assertIn('Startup Target', source)
+        self.assertIn('Missing Glyph Fix', source)
+        self.assertIn('Vibration Intensity', source)
+        self.assertIn('Vibration intensity', source)
+        self.assertIn('setMissingGlyphFixEnabled = callable<[string, boolean], PluginSettings>', source)
+        self.assertIn('set_missing_glyph_fix_enabled', source)
+        self.assertIn('syncMissingGlyphFixTarget = callable<[string], boolean>', source)
+        self.assertIn('set_missing_glyph_fix_trackpads_disabled', source)
+        self.assertIn('setMissingGlyphFixTrackpadsDisabled = callable<[string, boolean], PluginSettings>', source)
+        self.assertIn('testRumble = callable<[], boolean>', source)
+        self.assertIn('Test Rumble', source)
         self.assertIn("missingGlyphFixGames", source)
+        self.assertIn("disableTrackpads", source)
         self.assertIn("icon_data_format", source)
         self.assertIn("icon_hash", source)
         self.assertIn("local_cache_version", source)
@@ -999,16 +1079,13 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn("getActiveGameIconSource", source)
         self.assertIn("setInterval(() => {", source)
         self.assertIn('clearInterval(activeGamePollInterval)', source)
+        self.assertIn('Disable Trackpads', source)
+        self.assertIn("isTrackpadsDisabled", source)
+        self.assertIn("isMissingGlyphFixEnabled &&", source)
         self.assertIn("rumbleMessageKind", source)
-        self.assertIn('color: rumbleMessageKind === "error" ? "red" : undefined', source)
-        self.assertIn(
-            'Restores the Zotac Steam Deck-style controller targets after boot.',
-            source,
-        )
-        self.assertIn(
-            "Keeps reapplying your preferred vibration intensity",
-            source,
-        )
+        self.assertIn("rumbleMessageKind === 'error' ? 'red' : undefined", source)
+        self.assertIn("Restores the Zotac controller after boot.", source)
+        self.assertIn("Change and test vibration intensity.", source)
         self.assertIn("Rumble device is not available.", source)
         self.assertIn("settings.rumbleEnabled &&", source)
         self.assertIn("getRumbleDescription(settings)", source)

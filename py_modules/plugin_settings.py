@@ -7,6 +7,7 @@ STARTUP_APPLY_KEY = "startupApplyEnabled"
 RUMBLE_ENABLED_KEY = "rumbleEnabled"
 RUMBLE_INTENSITY_KEY = "rumbleIntensity"
 MISSING_GLYPH_FIX_GAMES_KEY = "missingGlyphFixGames"
+DISABLE_TRACKPADS_KEY = "disableTrackpads"
 DEFAULT_STARTUP_APPLY_ENABLED = True
 DEFAULT_RUMBLE_ENABLED = True
 DEFAULT_RUMBLE_INTENSITY = 75
@@ -26,6 +27,18 @@ def _write_setting(name, value):
     setting_file.setSetting(name, value)
     setting_file.commit()
     return value
+
+
+def _normalize_missing_glyph_fix_entry(entry):
+    if entry is True:
+        return {DISABLE_TRACKPADS_KEY: True}
+
+    if isinstance(entry, dict):
+        return {
+            DISABLE_TRACKPADS_KEY: bool(entry.get(DISABLE_TRACKPADS_KEY, True)),
+        }
+
+    return None
 
 
 def get_startup_apply_enabled():
@@ -64,11 +77,15 @@ def get_missing_glyph_fix_games():
     if not isinstance(games, dict):
         return {}
 
-    return {
-        str(app_id): True
-        for app_id, enabled in games.items()
-        if enabled
-    }
+    normalized_games = {}
+    for app_id, entry in games.items():
+        normalized_entry = _normalize_missing_glyph_fix_entry(entry)
+        if normalized_entry is None:
+            continue
+
+        normalized_games[str(app_id)] = normalized_entry
+
+    return normalized_games
 
 
 def get_missing_glyph_fix_enabled(app_id):
@@ -78,14 +95,42 @@ def get_missing_glyph_fix_enabled(app_id):
     return bool(get_missing_glyph_fix_games().get(str(app_id), False))
 
 
+def get_missing_glyph_fix_trackpads_disabled(app_id):
+    if app_id is None:
+        return False
+
+    entry = get_missing_glyph_fix_games().get(str(app_id))
+    if not entry:
+        return False
+
+    return bool(entry.get(DISABLE_TRACKPADS_KEY, True))
+
+
 def set_missing_glyph_fix_enabled(app_id, enabled):
     games = get_missing_glyph_fix_games()
     app_id = str(app_id)
 
     if enabled:
-        games[app_id] = True
+        current_entry = games.get(app_id)
+        games[app_id] = current_entry or {DISABLE_TRACKPADS_KEY: True}
     else:
         games.pop(app_id, None)
+
+    _write_setting(MISSING_GLYPH_FIX_GAMES_KEY, games)
+    return get_missing_glyph_fix_games()
+
+
+def set_missing_glyph_fix_trackpads_disabled(app_id, disabled):
+    games = get_missing_glyph_fix_games()
+    app_id = str(app_id)
+    entry = games.get(app_id)
+
+    if not entry:
+        return get_missing_glyph_fix_games()
+
+    games[app_id] = {
+        DISABLE_TRACKPADS_KEY: bool(disabled),
+    }
 
     _write_setting(MISSING_GLYPH_FIX_GAMES_KEY, games)
     return get_missing_glyph_fix_games()

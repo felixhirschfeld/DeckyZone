@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import decky
+import controller_targets
 import plugin_settings
 
 
@@ -23,6 +24,7 @@ READY_POLL_INTERVAL_SECONDS = 0.5
 DEFAULT_APP_ID = "0"
 STARTUP_MODE = "deck-uhid"
 MISSING_GLYPH_FIX_TARGET = "xbox-elite"
+ZOTAC_MOUSE_DEVICE_NAME = "ZOTAC Gaming Zone Mouse"
 DEFAULT_RUMBLE_REAPPLY_INTERVAL_SECONDS = 2
 RUMBLE_PREVIEW_DURATION_MS = 180
 EV_FF = 0x15
@@ -88,6 +90,7 @@ def _iow(ioctl_type, number, data_type):
 
 EVIOCSFF = _iow(ord("E"), 0x80, _FFEffect)
 EVIOCRMFF = _iow(ord("E"), 0x81, ctypes.c_int)
+EVIOCGRAB = _iow(ord("E"), 0x90, ctypes.c_int)
 
 
 class DeckyZoneService:
@@ -109,6 +112,8 @@ class DeckyZoneService:
         self._inputplumber_available = False
         self._startup_applied_this_session = False
         self._temporary_target_mode = None
+        self._zotac_mouse_device_fd = None
+        self._zotac_mouse_device_path = None
         self._rumble_available = False
         self._rumble_device_path = None
         self._rumble_task = None
@@ -198,7 +203,7 @@ class DeckyZoneService:
             self._inputplumber_available = False
             return False
 
-    def _apply_target_devices(self, target_mode):
+    def _apply_target_devices(self, target_mode, include_mouse=True):
         self.command_runner(
             self._busctl_args(
                 "call",
@@ -207,10 +212,10 @@ class DeckyZoneService:
                 "org.shadowblip.Input.CompositeDevice",
                 "SetTargetDevices",
                 "as",
-                "3",
-                target_mode,
-                "keyboard",
-                "mouse",
+                *controller_targets.build_target_devices_busctl_args(
+                    target_mode,
+                    include_mouse=include_mouse,
+                ),
             ),
             check=True,
             text=True,
@@ -219,6 +224,87 @@ class DeckyZoneService:
             env=self.get_env(),
         )
         self._inputplumber_available = True
+
+    def _get_zotac_mouse_candidate_paths(self):
+        input_class_path = Path("/sys/class/input")
+        if not input_class_path.exists():
+            return []
+
+        return sorted(
+            f"/dev/input/{path.name}"
+            for path in input_class_path.glob("event*")
+        )
+
+    def _read_input_device_name(self, device_path):
+        event_name = Path(device_path).name
+        return self.read_text(f"/sys/class/input/{event_name}/device/name")
+
+    def _resolve_zotac_mouse_device_path(self):
+        for candidate_path in self._get_zotac_mouse_candidate_paths():
+            try:
+                device_name = self._read_input_device_name(candidate_path)
+            except Exception:
+                continue
+
+            if device_name == ZOTAC_MOUSE_DEVICE_NAME:
+                return candidate_path
+
+        return None
+
+    def _open_event_device(self, device_path):
+        return os.open(device_path, os.O_RDONLY)
+
+    def _close_event_device(self, fd):
+        os.close(fd)
+
+    def _set_event_device_grab(self, fd, grabbed):
+        self._ioctl(fd, EVIOCGRAB, ctypes.c_int(1 if grabbed else 0))
+
+    def _grab_zotac_mouse_device(self):
+        if self._zotac_mouse_device_fd is not None:
+            return True
+
+        device_path = self._resolve_zotac_mouse_device_path()
+        if not device_path:
+            self.logger.warning("Unable to locate Zotac mouse input device for trackpad suppression.")
+            return False
+
+        fd = None
+        try:
+            fd = self._open_event_device(device_path)
+            self._set_event_device_grab(fd, True)
+            self._zotac_mouse_device_fd = fd
+            self._zotac_mouse_device_path = device_path
+            return True
+        except Exception as error:
+            if fd is not None:
+                try:
+                    self._close_event_device(fd)
+                except Exception:
+                    pass
+            self.logger.warning(f"Failed to grab Zotac mouse input device: {error}")
+            return False
+
+    def _release_zotac_mouse_device(self):
+        fd = self._zotac_mouse_device_fd
+        if fd is None:
+            return True
+
+        released = True
+        try:
+            self._set_event_device_grab(fd, False)
+        except Exception as error:
+            self.logger.warning(f"Failed to release Zotac mouse input device: {error}")
+            released = False
+        finally:
+            try:
+                self._close_event_device(fd)
+            except Exception:
+                pass
+            self._zotac_mouse_device_fd = None
+            self._zotac_mouse_device_path = None
+
+        return released
 
     def _restart_inputplumber(self):
         self.command_runner(
@@ -238,21 +324,37 @@ class DeckyZoneService:
         self.settings_store.set_missing_glyph_fix_enabled(app_id, enabled)
         return self._current_settings()
 
+    def set_missing_glyph_fix_trackpads_disabled(self, app_id, disabled):
+        if app_id in (None, "", DEFAULT_APP_ID):
+            return self._current_settings()
+
+        self.settings_store.set_missing_glyph_fix_trackpads_disabled(app_id, disabled)
+        return self._current_settings()
+
     async def sync_missing_glyph_fix_target(self, app_id):
         app_id = str(app_id or DEFAULT_APP_ID)
         glyph_fix_enabled = (
             app_id != DEFAULT_APP_ID
             and self.settings_store.get_missing_glyph_fix_enabled(app_id)
         )
+        trackpads_disabled = (
+            glyph_fix_enabled
+            and self.settings_store.get_missing_glyph_fix_trackpads_disabled(app_id)
+        )
 
         if glyph_fix_enabled:
+            trackpad_result = (
+                self._grab_zotac_mouse_device()
+                if trackpads_disabled
+                else self._release_zotac_mouse_device()
+            )
             if self._temporary_target_mode == MISSING_GLYPH_FIX_TARGET:
-                return True
+                return trackpad_result
 
             try:
                 self._apply_target_devices(MISSING_GLYPH_FIX_TARGET)
                 self._temporary_target_mode = MISSING_GLYPH_FIX_TARGET
-                return True
+                return trackpad_result
             except subprocess.CalledProcessError as error:
                 detail = (error.stderr or error.stdout or str(error)).strip()
                 self.logger.warning(f"Failed to apply missing glyph fix: {detail}")
@@ -261,6 +363,7 @@ class DeckyZoneService:
                 self.logger.warning(f"Failed to apply missing glyph fix: {error}")
                 return False
 
+        self._release_zotac_mouse_device()
         if self._temporary_target_mode != MISSING_GLYPH_FIX_TARGET:
             return False
 
@@ -668,6 +771,10 @@ class DeckyZoneService:
         self._set_status("applied", f"Startup mode re-applied: {STARTUP_MODE}.")
         return self.get_status()
 
+    async def cleanup(self):
+        self._release_zotac_mouse_device()
+        await self.stop_rumble_fixer()
+
 
 class Plugin:
     def __init__(self, service=None):
@@ -701,6 +808,9 @@ class Plugin:
     async def set_missing_glyph_fix_enabled(self, app_id, enabled):
         return self.service.set_missing_glyph_fix_enabled(app_id, enabled)
 
+    async def set_missing_glyph_fix_trackpads_disabled(self, app_id, disabled):
+        return self.service.set_missing_glyph_fix_trackpads_disabled(app_id, disabled)
+
     async def sync_missing_glyph_fix_target(self, app_id):
         return await self.service.sync_missing_glyph_fix_target(app_id)
 
@@ -726,11 +836,17 @@ class Plugin:
                 await self.startup_task
             except asyncio.CancelledError:
                 pass
-        await self.service.stop_rumble_fixer()
+        if hasattr(self.service, "cleanup"):
+            await self.service.cleanup()
+        else:
+            await self.service.stop_rumble_fixer()
 
     async def _uninstall(self):
         decky.logger.info("DeckyZone uninstall")
-        await self.service.stop_rumble_fixer()
+        if hasattr(self.service, "cleanup"):
+            await self.service.cleanup()
+        else:
+            await self.service.stop_rumble_fixer()
 
     async def _migration(self):
         decky.logger.info("Migrating DeckyZone")
