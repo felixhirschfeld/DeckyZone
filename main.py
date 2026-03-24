@@ -479,23 +479,56 @@ class DeckyZoneService:
         return self._current_settings()
 
     async def test_rumble(self):
-        config_path = self._resolve_zotac_hid_config_path()
-        if not config_path:
-            self.logger.warning("Failed to send test rumble: Zotac HID config node not found")
+        intensity = max(0.0, min(1.0, self.settings_store.get_rumble_intensity() / 100.0))
+        try:
+            self.command_runner(
+                self._busctl_args(
+                    "call",
+                    "org.shadowblip.InputPlumber",
+                    INPUTPLUMBER_DBUS_PATH,
+                    "org.shadowblip.Output.ForceFeedback",
+                    "Rumble",
+                    "d",
+                    str(intensity),
+                ),
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=self.get_env(),
+            )
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or error.stdout or str(error)).strip()
+            self.logger.warning(f"Failed to send test rumble via InputPlumber: {detail}")
+            return False
+        except Exception as error:
+            self.logger.warning(f"Failed to send test rumble via InputPlumber: {error}")
             return False
 
-        if not self._has_zotac_hid_attribute(config_path, "motor_test"):
-            self.logger.warning("Failed to send test rumble: motor_test attribute is missing")
-            return False
-
-        intensity = self.settings_store.get_rumble_intensity()
-        motor_test_path = str(Path(config_path) / "motor_test")
+        await self.sleep(RUMBLE_PREVIEW_DURATION_MS / 1000.0)
 
         try:
-            self._write_zotac_hid_value(motor_test_path, f"0 0 {intensity} {intensity}")
+            self.command_runner(
+                self._busctl_args(
+                    "call",
+                    "org.shadowblip.InputPlumber",
+                    INPUTPLUMBER_DBUS_PATH,
+                    "org.shadowblip.Output.ForceFeedback",
+                    "Stop",
+                ),
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=self.get_env(),
+            )
             return True
-        except OSError as error:
-            self.logger.warning(f"Failed to send test rumble: {error}")
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or error.stdout or str(error)).strip()
+            self.logger.warning(f"Failed to stop test rumble via InputPlumber: {detail}")
+            return False
+        except Exception as error:
+            self.logger.warning(f"Failed to stop test rumble via InputPlumber: {error}")
             return False
 
     async def wait_for_inputplumber_dbus(

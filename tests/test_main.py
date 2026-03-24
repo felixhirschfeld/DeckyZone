@@ -481,25 +481,6 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(service._resolve_rumble_device_path())
 
-    async def test_resolve_zotac_hid_config_path_uses_save_config_marker(self):
-        service = main.DeckyZoneService(
-            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
-            sleep=_async_noop,
-            read_text=lambda path: "",
-        )
-        service._get_zotac_hid_config_paths = lambda: [
-            "/sys/class/hidraw/hidraw0/device",
-            "/sys/class/hidraw/hidraw1/device",
-        ]
-        service._is_zotac_hid_config_path = (
-            lambda path: path == "/sys/class/hidraw/hidraw1/device"
-        )
-
-        self.assertEqual(
-            service._resolve_zotac_hid_config_path(),
-            "/sys/class/hidraw/hidraw1/device",
-        )
-
     async def test_probe_rumble_available_returns_false_off_linux(self):
         service = main.DeckyZoneService(
             command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
@@ -568,18 +549,22 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_test_rumble_writes_motor_test_using_saved_intensity(self):
+    async def test_test_rumble_calls_force_feedback_rumble_and_stop(self):
         calls = []
+        sleeps = []
+
+        def runner(cmd, **kwargs):
+            calls.append(cmd)
+            return _CompletedProcess(returncode=0)
+
+        async def fake_sleep(value):
+            sleeps.append(value)
+
         service = main.DeckyZoneService(
-            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
-            sleep=_async_noop,
+            command_runner=runner,
+            sleep=fake_sleep,
             read_text=lambda path: "",
         )
-        service._resolve_zotac_hid_config_path = (
-            lambda: "/sys/class/hidraw/hidraw0/device"
-        )
-        service._has_zotac_hid_attribute = lambda path, attr: True
-        service._write_zotac_hid_value = lambda path, value: calls.append((path, value))
 
         main.plugin_settings.set_rumble_intensity(55)
 
@@ -587,52 +572,73 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result)
         self.assertEqual(
-            calls,
+            calls[0][:-1],
             [
-                ("/sys/class/hidraw/hidraw0/device/motor_test", "0 0 55 55"),
+                "busctl",
+                "call",
+                "org.shadowblip.InputPlumber",
+                main.INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Output.ForceFeedback",
+                "Rumble",
+                "d",
             ],
         )
+        self.assertAlmostEqual(float(calls[0][-1]), 0.55)
+        self.assertEqual(
+            calls[1],
+            [
+                "busctl",
+                "call",
+                "org.shadowblip.InputPlumber",
+                main.INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Output.ForceFeedback",
+                "Stop",
+            ],
+        )
+        self.assertEqual(sleeps, [main.RUMBLE_PREVIEW_DURATION_MS / 1000.0])
 
-    async def test_test_rumble_returns_false_without_zotac_config_node(self):
+    async def test_test_rumble_returns_false_when_rumble_dbus_call_fails(self):
+        calls = []
+
+        def runner(cmd, **kwargs):
+            calls.append(cmd)
+            if len(calls) == 1:
+                raise subprocess.CalledProcessError(
+                    1, cmd, stderr="dbus rumble failed"
+                )
+            return _CompletedProcess(returncode=0)
+
         service = main.DeckyZoneService(
-            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            command_runner=runner,
             sleep=_async_noop,
             read_text=lambda path: "",
         )
-        service._resolve_zotac_hid_config_path = lambda: None
 
         self.assertFalse(await service.test_rumble())
+        self.assertEqual(len(calls), 1)
 
-    async def test_test_rumble_returns_false_when_motor_test_attribute_is_missing(self):
+    async def test_test_rumble_returns_false_when_stop_dbus_call_fails(self):
+        calls = []
+        sleeps = []
+
+        def runner(cmd, **kwargs):
+            calls.append(cmd)
+            if len(calls) == 2:
+                raise subprocess.CalledProcessError(1, cmd, stderr="dbus stop failed")
+            return _CompletedProcess(returncode=0)
+
+        async def fake_sleep(value):
+            sleeps.append(value)
+
         service = main.DeckyZoneService(
-            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
-            sleep=_async_noop,
+            command_runner=runner,
+            sleep=fake_sleep,
             read_text=lambda path: "",
         )
-        service._resolve_zotac_hid_config_path = (
-            lambda: "/sys/class/hidraw/hidraw0/device"
-        )
-        service._has_zotac_hid_attribute = lambda path, attr: False
 
         self.assertFalse(await service.test_rumble())
-
-    async def test_test_rumble_returns_false_when_motor_test_write_fails(self):
-        service = main.DeckyZoneService(
-            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
-            sleep=_async_noop,
-            read_text=lambda path: "",
-        )
-        service._resolve_zotac_hid_config_path = (
-            lambda: "/sys/class/hidraw/hidraw0/device"
-        )
-        service._has_zotac_hid_attribute = lambda path, attr: True
-
-        def write_value(path, value):
-            raise OSError("boom")
-
-        service._write_zotac_hid_value = write_value
-
-        self.assertFalse(await service.test_rumble())
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sleeps, [main.RUMBLE_PREVIEW_DURATION_MS / 1000.0])
 
     async def test_set_rumble_enabled_does_not_probe_inputplumber(self):
         calls = []
