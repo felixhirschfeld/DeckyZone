@@ -4,12 +4,14 @@ from settings import SettingsManager
 
 
 STARTUP_APPLY_KEY = "startupApplyEnabled"
+HOME_BUTTON_ENABLED_KEY = "homeButtonEnabled"
 BRIGHTNESS_DIAL_FIX_ENABLED_KEY = "brightnessDialFixEnabled"
 RUMBLE_ENABLED_KEY = "rumbleEnabled"
 RUMBLE_INTENSITY_KEY = "rumbleIntensity"
 MISSING_GLYPH_FIX_GAMES_KEY = "missingGlyphFixGames"
 DISABLE_TRACKPADS_KEY = "disableTrackpads"
 DEFAULT_STARTUP_APPLY_ENABLED = True
+DEFAULT_HOME_BUTTON_ENABLED = True
 DEFAULT_BRIGHTNESS_DIAL_FIX_ENABLED = True
 DEFAULT_RUMBLE_ENABLED = True
 DEFAULT_RUMBLE_INTENSITY = 75
@@ -29,6 +31,13 @@ def _write_setting(name, value):
     setting_file.setSetting(name, value)
     setting_file.commit()
     return value
+
+
+def reset_settings():
+    setting_file.read()
+    setting_file.settings = {}
+    setting_file.commit()
+    return {}
 
 
 def _normalize_missing_glyph_fix_entry(entry):
@@ -51,6 +60,16 @@ def get_startup_apply_enabled():
 def set_startup_apply_enabled(enabled):
     _write_setting(STARTUP_APPLY_KEY, bool(enabled))
     return get_startup_apply_enabled()
+
+
+def get_home_button_enabled():
+    settings = _read_settings()
+    return bool(settings.get(HOME_BUTTON_ENABLED_KEY, DEFAULT_HOME_BUTTON_ENABLED))
+
+
+def set_home_button_enabled(enabled):
+    _write_setting(HOME_BUTTON_ENABLED_KEY, bool(enabled))
+    return get_home_button_enabled()
 
 
 def get_brightness_dial_fix_enabled():

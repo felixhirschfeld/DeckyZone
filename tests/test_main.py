@@ -132,6 +132,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_apply_startup_mode_calls_busctl_after_dbus_is_ready(self):
         commands = []
+        listener_calls = []
         logger = _FakeLogger()
 
         def runner(command, **kwargs):
@@ -147,6 +148,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         service._get_ids = lambda: (1000, 1000)
+        service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
 
         status = await service.apply_startup_mode()
 
@@ -181,6 +183,10 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "keyboard",
                 "mouse",
             ],
+        )
+        self.assertEqual(
+            listener_calls,
+            ["start"],
         )
         info_messages = [args[0] for level, args, _ in logger.messages if level == "info"]
         self.assertIn(
@@ -281,6 +287,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             service.get_settings(),
             {
                 "startupApplyEnabled": True,
+                "homeButtonEnabled": True,
                 "brightnessDialFixEnabled": True,
                 "inputplumberAvailable": True,
                 "rumbleEnabled": True,
@@ -305,6 +312,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             service.get_settings(),
             {
                 "startupApplyEnabled": True,
+                "homeButtonEnabled": True,
                 "brightnessDialFixEnabled": True,
                 "inputplumberAvailable": False,
                 "rumbleEnabled": True,
@@ -340,6 +348,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             result,
             {
                 "startupApplyEnabled": True,
+                "homeButtonEnabled": True,
                 "brightnessDialFixEnabled": True,
                 "inputplumberAvailable": True,
                 "rumbleEnabled": False,
@@ -354,6 +363,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             result,
             {
                 "startupApplyEnabled": True,
+                "homeButtonEnabled": True,
                 "brightnessDialFixEnabled": True,
                 "inputplumberAvailable": True,
                 "rumbleEnabled": True,
@@ -367,6 +377,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_sync_missing_glyph_fix_target_applies_xbox_elite_for_enabled_game(self):
         commands = []
         grabbed = []
+        listener_calls = []
         service = main.DeckyZoneService(
             command_runner=lambda command, **kwargs: commands.append(command)
             or _CompletedProcess(returncode=0),
@@ -374,6 +385,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             read_text=lambda path: "",
         )
         service._grab_zotac_mouse_device = lambda: grabbed.append("grab") or True
+        service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
         result = await service.sync_missing_glyph_fix_target("123")
@@ -400,10 +412,46 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                     "SetTargetDevices",
                     "as",
                     "3",
-                    "xbox-elite",
-                    "keyboard",
-                    "mouse",
-                ]
+                "xbox-elite",
+                "keyboard",
+                "mouse",
+                ],
+            ],
+        )
+        self.assertEqual(listener_calls, ["start"])
+
+    async def test_sync_missing_glyph_fix_target_does_not_start_home_button_listener_when_disabled(self):
+        commands = []
+        listener_calls = []
+        service = main.DeckyZoneService(
+            command_runner=lambda command, **kwargs: commands.append(command)
+            or _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._grab_zotac_mouse_device = lambda: True
+        service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
+        main.plugin_settings.set_home_button_enabled(False)
+        main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
+
+        result = await service.sync_missing_glyph_fix_target("123")
+
+        self.assertTrue(result)
+        self.assertEqual(listener_calls, [])
+        self.assertEqual(
+            commands[-1],
+            [
+                "busctl",
+                "call",
+                "org.shadowblip.InputPlumber",
+                main.INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "SetTargetDevices",
+                "as",
+                "3",
+                "xbox-elite",
+                "keyboard",
+                "mouse",
             ],
         )
 
@@ -479,14 +527,141 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_cleanup_stops_home_button_listener_when_active(self):
+        calls = []
+        service = main.DeckyZoneService(
+            command_runner=lambda command, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service.stop_home_button_listener = lambda: calls.append("stop-home") or asyncio.sleep(0)
+        service.stop_brightness_dial_fixer = _async_noop
+        service.stop_rumble_fixer = _async_noop
+        service._release_zotac_mouse_device = lambda: True
+
+        await service.cleanup()
+
+        self.assertEqual(calls, ["stop-home"])
+
+    async def test_set_home_button_enabled_updates_settings(self):
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._inputplumber_available = True
+        service._rumble_available = False
+
+        result = await service.set_home_button_enabled(False)
+
+        self.assertEqual(
+            result,
+            {
+                "startupApplyEnabled": True,
+                "homeButtonEnabled": False,
+                "brightnessDialFixEnabled": True,
+                "inputplumberAvailable": True,
+                "rumbleEnabled": True,
+                "rumbleIntensity": 75,
+                "rumbleAvailable": False,
+                "missingGlyphFixGames": {},
+            },
+        )
+
+    async def test_set_home_button_enabled_starts_and_stops_listener_for_active_runtime_mode(self):
+        calls = []
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._startup_target_active = True
+
+        async def start():
+            calls.append("start")
+            return True
+
+        async def stop():
+            calls.append("stop")
+            return True
+
+        service.start_home_button_listener = start
+        service.stop_home_button_listener = stop
+
+        await service.set_home_button_enabled(False)
+        await service.set_home_button_enabled(True)
+
+        self.assertEqual(calls, ["stop", "start"])
+
+    async def test_handle_home_button_input_event_emits_home_short_press(self):
+        emitted = []
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        original_emit = main.decky.emit
+
+        async def fake_emit(event_name):
+            emitted.append(event_name)
+
+        main.decky.emit = fake_emit
+        try:
+            result = await service._handle_home_button_input_event(
+                service._build_input_event(main.EV_KEY, main.KEY_HOME_SHORT_PRESS, 1)
+            )
+        finally:
+            main.decky.emit = original_emit
+
+        self.assertTrue(result)
+        self.assertEqual(emitted, ["zotac_home_short_pressed"])
+
+    async def test_handle_home_button_input_event_ignores_other_front_buttons_and_repeat(self):
+        emitted = []
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        original_emit = main.decky.emit
+
+        async def fake_emit(event_name):
+            emitted.append(event_name)
+
+        main.decky.emit = fake_emit
+        try:
+            zotac_result = await service._handle_home_button_input_event(
+                service._build_input_event(main.EV_KEY, main.KEY_ZOTAC_SHORT_PRESS, 1)
+            )
+            more_result = await service._handle_home_button_input_event(
+                service._build_input_event(main.EV_KEY, main.KEY_MORE_BUTTON, 1)
+            )
+            home_long_result = await service._handle_home_button_input_event(
+                service._build_input_event(main.EV_KEY, main.KEY_HOME_LONG_PRESS, 1)
+            )
+            repeat_result = await service._handle_home_button_input_event(
+                service._build_input_event(main.EV_KEY, main.KEY_HOME_SHORT_PRESS, 2)
+            )
+        finally:
+            main.decky.emit = original_emit
+
+        self.assertFalse(zotac_result)
+        self.assertFalse(more_result)
+        self.assertFalse(home_long_result)
+        self.assertFalse(repeat_result)
+        self.assertEqual(emitted, [])
+
     async def test_sync_missing_glyph_fix_target_restarts_inputplumber_when_startup_apply_disabled(self):
         commands = []
+        listener_calls = []
         service = main.DeckyZoneService(
             command_runner=lambda command, **kwargs: commands.append(command)
             or _CompletedProcess(returncode=0),
             sleep=_async_noop,
             read_text=lambda path: "",
         )
+        service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
+        service.stop_home_button_listener = lambda: listener_calls.append("stop") or asyncio.sleep(0)
         main.plugin_settings.set_startup_apply_enabled(False)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
@@ -494,6 +669,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         result = await service.sync_missing_glyph_fix_target("0")
 
         self.assertTrue(result)
+        self.assertEqual(listener_calls, ["start", "stop"])
         self.assertEqual(commands[-1], ["systemctl", "restart", "inputplumber"])
 
     async def test_sync_missing_glyph_fix_target_does_not_overwrite_startup_status(self):
@@ -923,6 +1099,30 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(main.plugin_settings.set_brightness_dial_fix_enabled(False))
         self.assertFalse(main.plugin_settings.get_brightness_dial_fix_enabled())
 
+    async def test_plugin_settings_persist_home_button_enabled(self):
+        self.assertTrue(main.plugin_settings.get_home_button_enabled())
+        self.assertFalse(main.plugin_settings.set_home_button_enabled(False))
+        self.assertFalse(main.plugin_settings.get_home_button_enabled())
+
+    async def test_plugin_settings_reset_clears_persisted_values(self):
+        main.plugin_settings.set_startup_apply_enabled(False)
+        main.plugin_settings.set_home_button_enabled(False)
+        main.plugin_settings.set_brightness_dial_fix_enabled(False)
+        main.plugin_settings.set_rumble_enabled(False)
+        main.plugin_settings.set_rumble_intensity(55)
+        main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
+        main.plugin_settings.set_missing_glyph_fix_trackpads_disabled("123", False)
+
+        main.plugin_settings.reset_settings()
+
+        self.assertEqual(_FAKE_SETTINGS_STORE, {})
+        self.assertTrue(main.plugin_settings.get_startup_apply_enabled())
+        self.assertTrue(main.plugin_settings.get_home_button_enabled())
+        self.assertTrue(main.plugin_settings.get_brightness_dial_fix_enabled())
+        self.assertTrue(main.plugin_settings.get_rumble_enabled())
+        self.assertEqual(main.plugin_settings.get_rumble_intensity(), 75)
+        self.assertEqual(main.plugin_settings.get_missing_glyph_fix_games(), {})
+
     async def test_set_brightness_dial_fix_enabled_updates_settings(self):
         service = main.DeckyZoneService(
             command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
@@ -938,6 +1138,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             result,
             {
                 "startupApplyEnabled": True,
+                "homeButtonEnabled": True,
                 "brightnessDialFixEnabled": False,
                 "inputplumberAvailable": True,
                 "rumbleEnabled": True,
@@ -1102,6 +1303,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             result,
             {
                 "startupApplyEnabled": False,
+                "homeButtonEnabled": True,
                 "brightnessDialFixEnabled": True,
                 "inputplumberAvailable": True,
                 "rumbleEnabled": True,
@@ -1154,6 +1356,43 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_disable_startup_target_runtime_restarts_inputplumber_when_active(self):
+        commands = []
+        listener_calls = []
+        service = main.DeckyZoneService(
+            command_runner=lambda command, **kwargs: commands.append(command)
+            or _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._startup_target_active = True
+        service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
+        service.stop_home_button_listener = lambda: listener_calls.append("stop") or asyncio.sleep(0)
+
+        result = await service.disable_startup_target_runtime()
+
+        self.assertTrue(result)
+        self.assertFalse(service._startup_target_active)
+        self.assertEqual(commands, [["systemctl", "restart", "inputplumber"]])
+        self.assertEqual(listener_calls, ["stop"])
+
+    async def test_disable_startup_target_runtime_does_not_restart_inputplumber_during_glyph_fix(self):
+        commands = []
+        service = main.DeckyZoneService(
+            command_runner=lambda command, **kwargs: commands.append(command)
+            or _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._startup_target_active = True
+        service._temporary_target_mode = main.MISSING_GLYPH_FIX_TARGET
+
+        result = await service.disable_startup_target_runtime()
+
+        self.assertFalse(result)
+        self.assertEqual(commands, [])
+        self.assertFalse(service._startup_target_active)
+
 
 class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -1167,6 +1406,7 @@ class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
             def get_settings(self):
                 return {
                     "startupApplyEnabled": True,
+                    "homeButtonEnabled": True,
                     "brightnessDialFixEnabled": True,
                     "inputplumberAvailable": True,
                     "rumbleEnabled": True,
@@ -1207,6 +1447,7 @@ class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
             def get_settings(self):
                 return {
                     "startupApplyEnabled": False,
+                    "homeButtonEnabled": True,
                     "brightnessDialFixEnabled": True,
                     "inputplumberAvailable": True,
                     "rumbleEnabled": True,
@@ -1219,6 +1460,7 @@ class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 calls.append(("set", enabled))
                 return {
                     "startupApplyEnabled": enabled,
+                    "homeButtonEnabled": True,
                     "brightnessDialFixEnabled": True,
                     "inputplumberAvailable": True,
                     "rumbleEnabled": True,
@@ -1258,6 +1500,7 @@ class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
             def get_settings(self):
                 return {
                     "startupApplyEnabled": False,
+                    "homeButtonEnabled": True,
                     "brightnessDialFixEnabled": False,
                     "inputplumberAvailable": True,
                     "rumbleEnabled": True,
@@ -1318,6 +1561,7 @@ class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
             def get_settings(self):
                 return {
                     "startupApplyEnabled": True,
+                    "homeButtonEnabled": True,
                     "brightnessDialFixEnabled": False,
                     "inputplumberAvailable": True,
                     "rumbleEnabled": False,
@@ -1359,6 +1603,88 @@ class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
         )
         await plugin._unload()
 
+    async def test_plugin_set_startup_apply_enabled_applies_target_immediately_when_enabled(self):
+        calls = []
+
+        class _FakeService:
+            def set_startup_apply_enabled(self, enabled):
+                calls.append(("set", enabled))
+                return {
+                    "startupApplyEnabled": enabled,
+                    "homeButtonEnabled": True,
+                    "brightnessDialFixEnabled": True,
+                    "inputplumberAvailable": True,
+                    "rumbleEnabled": True,
+                    "rumbleIntensity": 75,
+                    "rumbleAvailable": True,
+                    "missingGlyphFixGames": {},
+                }
+
+            async def apply_startup_mode(self):
+                calls.append("apply")
+                return {"state": "applied", "message": "Startup mode re-applied: deck-uhid."}
+
+            async def sync_home_button_navigation_state(self):
+                calls.append("sync-home")
+
+        plugin = main.Plugin()
+        plugin.service = _FakeService()
+
+        result = await plugin.set_startup_apply_enabled(True)
+
+        self.assertTrue(result["startupApplyEnabled"])
+        self.assertEqual(calls, [("set", True), "apply", "sync-home"])
+
+    async def test_plugin_set_startup_apply_enabled_restores_target_immediately_when_disabled(self):
+        calls = []
+
+        class _FakeService:
+            def set_startup_apply_enabled(self, enabled):
+                calls.append(("set", enabled))
+                return {
+                    "startupApplyEnabled": enabled,
+                    "homeButtonEnabled": True,
+                    "brightnessDialFixEnabled": True,
+                    "inputplumberAvailable": True,
+                    "rumbleEnabled": True,
+                    "rumbleIntensity": 75,
+                    "rumbleAvailable": True,
+                    "missingGlyphFixGames": {},
+                }
+
+            async def disable_startup_target_runtime(self):
+                calls.append("disable-runtime")
+                return True
+
+            async def sync_home_button_navigation_state(self):
+                calls.append("sync-home")
+
+        plugin = main.Plugin()
+        plugin.service = _FakeService()
+
+        result = await plugin.set_startup_apply_enabled(False)
+
+        self.assertFalse(result["startupApplyEnabled"])
+        self.assertEqual(calls, [("set", False), "disable-runtime", "sync-home"])
+
+    async def test_plugin_uninstall_runs_cleanup_and_clears_settings(self):
+        calls = []
+        main.plugin_settings.set_startup_apply_enabled(False)
+        main.plugin_settings.set_home_button_enabled(False)
+        main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
+
+        class _FakeService:
+            async def cleanup(self):
+                calls.append("cleanup")
+
+        plugin = main.Plugin()
+        plugin.service = _FakeService()
+
+        await plugin._uninstall()
+
+        self.assertEqual(calls, ["cleanup"])
+        self.assertEqual(_FAKE_SETTINGS_STORE, {})
+
 
 class FrontendSourceTests(unittest.TestCase):
     def test_index_uses_controller_panel_with_rumble_controls(self):
@@ -1371,7 +1697,11 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn('Startup Target', source)
         self.assertIn('Xbox Elite Mode', source)
         self.assertIn('Brightness Dial', source)
+        self.assertIn('Enable Home Button', source)
         self.assertIn('Vibration Intensity', source)
+        self.assertIn('homeButtonEnabled', source)
+        self.assertIn('setHomeButtonEnabled = callable<[boolean], PluginSettings>', source)
+        self.assertIn('set_home_button_enabled', source)
         self.assertIn('brightnessDialFixEnabled', source)
         self.assertIn('setBrightnessDialFixEnabled = callable<[boolean], PluginSettings>', source)
         self.assertIn('set_brightness_dial_fix_enabled', source)
@@ -1402,6 +1732,10 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn("Promise.all([getStatus(), getSettings()])", source)
         self.assertIn("function startBootstrap()", source)
         self.assertIn("void startBootstrap()", source)
+        self.assertIn("Navigation.Navigate('/library/home')", source)
+        self.assertIn("Navigation.CloseSideMenus()", source)
+        self.assertIn("if (!homeButtonEnabled)", source)
+        self.assertIn("'zotac_home_short_pressed'", source)
         self.assertIn("SteamSpinner", source)
         self.assertIn("if (bootstrap.state === 'loading')", source)
         self.assertIn("if (bootstrap.state === 'error')", source)
@@ -1433,6 +1767,8 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn("rumbleMessageKind", source)
         self.assertIn("rumbleMessageKind === 'error' ? 'red' : undefined", source)
         self.assertIn("Restores the Zotac controller after boot and enables the right brightness dial.", source)
+        self.assertIn("When enabled, Zotac Home short opens SteamUI Home while Startup Target or Xbox Elite Mode is active.", source)
+        self.assertIn("if (settings.homeButtonEnabled)", source)
         self.assertIn("Enable the right dial brightness.", source)
         self.assertIn("Change and test vibration intensity.", source)
         self.assertIn("Rumble device is not available.", source)

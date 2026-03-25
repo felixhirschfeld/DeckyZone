@@ -26,9 +26,12 @@ DEFAULT_APP_ID = "0"
 STARTUP_MODE = "deck-uhid"
 MISSING_GLYPH_FIX_TARGET = "xbox-elite"
 ZOTAC_MOUSE_DEVICE_NAME = "ZOTAC Gaming Zone Mouse"
+ZOTAC_KEYBOARD_DEVICE_NAME = "ZOTAC Gaming Zone Keyboard"
 DEFAULT_RUMBLE_REAPPLY_INTERVAL_SECONDS = 2
 DEFAULT_BRIGHTNESS_DIAL_RETRY_INTERVAL_SECONDS = 1
 DEFAULT_BRIGHTNESS_DIAL_POLL_INTERVAL_SECONDS = 0.1
+DEFAULT_HOME_BUTTON_RETRY_INTERVAL_SECONDS = 1
+DEFAULT_HOME_BUTTON_POLL_INTERVAL_SECONDS = 0.1
 RUMBLE_PREVIEW_DURATION_MS = 180
 INPUTPLUMBER_KEYBOARD_DEVICE_NAME = "InputPlumber Keyboard"
 EV_KEY = 0x01
@@ -37,6 +40,10 @@ FF_RUMBLE = 0x50
 FF_GAIN = 0x60
 KEY_BRIGHTNESSDOWN = 224
 KEY_BRIGHTNESSUP = 225
+KEY_ZOTAC_SHORT_PRESS = 186
+KEY_MORE_BUTTON = 187
+KEY_HOME_SHORT_PRESS = 188
+KEY_HOME_LONG_PRESS = 189
 
 
 class _TimeVal(ctypes.Structure):
@@ -118,12 +125,16 @@ class DeckyZoneService:
         self._privilege_context_logged = False
         self._inputplumber_available = False
         self._startup_applied_this_session = False
+        self._startup_target_active = False
         self._temporary_target_mode = None
         self._zotac_mouse_device_fd = None
         self._zotac_mouse_device_path = None
         self._brightness_dial_device_path = None
         self._brightness_dial_task = None
         self._brightness_dial_running = False
+        self._home_button_device_path = None
+        self._home_button_task = None
+        self._home_button_running = False
         self._rumble_available = False
         self._rumble_device_path = None
         self._rumble_task = None
@@ -148,6 +159,7 @@ class DeckyZoneService:
     def _current_settings(self):
         return {
             "startupApplyEnabled": self.settings_store.get_startup_apply_enabled(),
+            "homeButtonEnabled": self.settings_store.get_home_button_enabled(),
             "brightnessDialFixEnabled": self.settings_store.get_brightness_dial_fix_enabled(),
             "inputplumberAvailable": self._inputplumber_available,
             "rumbleEnabled": self.settings_store.get_rumble_enabled(),
@@ -262,6 +274,18 @@ class DeckyZoneService:
 
         return None
 
+    def _resolve_zotac_keyboard_device_path(self):
+        for candidate_path in self._get_zotac_mouse_candidate_paths():
+            try:
+                device_name = self._read_input_device_name(candidate_path)
+            except Exception:
+                continue
+
+            if device_name == ZOTAC_KEYBOARD_DEVICE_NAME:
+                return candidate_path
+
+        return None
+
     def _open_event_device(self, device_path):
         return os.open(device_path, os.O_RDONLY)
 
@@ -310,6 +334,122 @@ class DeckyZoneService:
         except Exception as error:
             self.logger.warning(f"Failed to emit brightness dial input: {error}")
             return False
+
+    def _is_home_short_press(self, event):
+        return (
+            event.type == EV_KEY
+            and event.value == 1
+            and event.code == KEY_HOME_SHORT_PRESS
+        )
+
+    async def _handle_home_button_input_event(self, event):
+        if not self._is_home_short_press(event):
+            return False
+
+        try:
+            await decky.emit("zotac_home_short_pressed")
+            return True
+        except Exception as error:
+            self.logger.warning(f"Failed to emit Home short press: {error}")
+            return False
+
+    async def _home_button_loop(self):
+        while self._home_button_running:
+            device_path = self._resolve_zotac_keyboard_device_path()
+            self._home_button_device_path = device_path
+
+            if not device_path:
+                await self.sleep(DEFAULT_HOME_BUTTON_RETRY_INTERVAL_SECONDS)
+                continue
+
+            fd = None
+            try:
+                fd = self._open_nonblocking_event_device(device_path)
+                while self._home_button_running:
+                    try:
+                        event = self._read_input_event_from_fd(fd)
+                    except BlockingIOError:
+                        await self.sleep(DEFAULT_HOME_BUTTON_POLL_INTERVAL_SECONDS)
+                        continue
+                    except OSError as error:
+                        if error.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+                            await self.sleep(DEFAULT_HOME_BUTTON_POLL_INTERVAL_SECONDS)
+                            continue
+                        raise
+
+                    await self._handle_home_button_input_event(event)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                self.logger.warning(
+                    f"Home button listener lost Zotac keyboard device: {error}"
+                )
+            finally:
+                if fd is not None:
+                    try:
+                        self._close_event_device(fd)
+                    except Exception:
+                        pass
+                self._home_button_device_path = None
+
+            if self._home_button_running:
+                await self.sleep(DEFAULT_HOME_BUTTON_RETRY_INTERVAL_SECONDS)
+
+    async def start_home_button_listener(self):
+        if not self._is_linux_platform():
+            return False
+
+        if self._home_button_task and not self._home_button_task.done():
+            return True
+
+        self._home_button_running = True
+        self._home_button_task = asyncio.create_task(self._home_button_loop())
+        return True
+
+    async def stop_home_button_listener(self):
+        self._home_button_running = False
+
+        if self._home_button_task and not self._home_button_task.done():
+            self._home_button_task.cancel()
+            try:
+                await self._home_button_task
+            except asyncio.CancelledError:
+                pass
+
+        self._home_button_task = None
+        self._home_button_device_path = None
+        return True
+
+    async def _enable_home_button_navigation(self):
+        try:
+            await self.start_home_button_listener()
+            return True
+        except Exception as error:
+            self.logger.warning(f"Failed to enable Home button navigation: {error}")
+            return False
+
+    async def _disable_home_button_navigation(self):
+        try:
+            await self.stop_home_button_listener()
+            return True
+        except Exception as error:
+            self.logger.warning(f"Failed to disable Home button navigation: {error}")
+            return False
+
+    def _should_enable_home_button_navigation(self):
+        return self.settings_store.get_home_button_enabled() and (
+            self._startup_target_active
+            or self._temporary_target_mode == MISSING_GLYPH_FIX_TARGET
+        )
+
+    async def _sync_home_button_navigation_state(self):
+        if self._should_enable_home_button_navigation():
+            return await self._enable_home_button_navigation()
+
+        return await self._disable_home_button_navigation()
+
+    async def sync_home_button_navigation_state(self):
+        return await self._sync_home_button_navigation_state()
 
     def _set_event_device_grab(self, fd, grabbed):
         self._ioctl(fd, EVIOCGRAB, ctypes.c_int(1 if grabbed else 0))
@@ -403,6 +543,7 @@ class DeckyZoneService:
                 else self._release_zotac_mouse_device()
             )
             if self._temporary_target_mode == MISSING_GLYPH_FIX_TARGET:
+                await self._sync_home_button_navigation_state()
                 return trackpad_result
 
             try:
@@ -410,6 +551,7 @@ class DeckyZoneService:
                     return False
                 self._apply_target_devices(MISSING_GLYPH_FIX_TARGET)
                 self._temporary_target_mode = MISSING_GLYPH_FIX_TARGET
+                await self._sync_home_button_navigation_state()
                 return trackpad_result
             except subprocess.CalledProcessError as error:
                 detail = (error.stderr or error.stdout or str(error)).strip()
@@ -421,6 +563,7 @@ class DeckyZoneService:
 
         self._release_zotac_mouse_device()
         if self._temporary_target_mode != MISSING_GLYPH_FIX_TARGET:
+            await self._sync_home_button_navigation_state()
             return False
 
         try:
@@ -428,9 +571,12 @@ class DeckyZoneService:
                 if not await self.wait_for_inputplumber_dbus_silently():
                     return False
                 self._apply_target_devices(STARTUP_MODE)
+                self._startup_target_active = True
             else:
                 self._restart_inputplumber()
+                self._startup_target_active = False
             self._temporary_target_mode = None
+            await self._sync_home_button_navigation_state()
             return True
         except subprocess.CalledProcessError as error:
             detail = (error.stderr or error.stdout or str(error)).strip()
@@ -624,6 +770,31 @@ class DeckyZoneService:
         else:
             self._set_status("disabled", DISABLED_MESSAGE)
 
+        return self._current_settings()
+
+    async def disable_startup_target_runtime(self):
+        self._startup_target_active = False
+
+        if self._temporary_target_mode == MISSING_GLYPH_FIX_TARGET:
+            await self._sync_home_button_navigation_state()
+            return False
+
+        try:
+            self._restart_inputplumber()
+            await self._sync_home_button_navigation_state()
+            self._set_status("disabled", DISABLED_MESSAGE)
+            return True
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or error.stdout or str(error)).strip()
+            self.logger.warning(f"Failed to restore inherited controller target: {detail}")
+            return False
+        except Exception as error:
+            self.logger.warning(f"Failed to restore inherited controller target: {error}")
+            return False
+
+    async def set_home_button_enabled(self, enabled):
+        self.settings_store.set_home_button_enabled(enabled)
+        await self._sync_home_button_navigation_state()
         return self._current_settings()
 
     async def _brightness_dial_loop(self):
@@ -925,10 +1096,15 @@ class DeckyZoneService:
             return self.get_status()
 
         self._startup_applied_this_session = True
+        self._startup_target_active = True
+        await self._sync_home_button_navigation_state()
         self._set_status("applied", f"Startup mode re-applied: {STARTUP_MODE}.")
         return self.get_status()
 
     async def cleanup(self):
+        self._startup_target_active = False
+        self._temporary_target_mode = None
+        await self._sync_home_button_navigation_state()
         await self.stop_brightness_dial_fixer()
         self._release_zotac_mouse_device()
         await self.stop_rumble_fixer()
@@ -955,7 +1131,17 @@ class Plugin:
                 pass
             self.startup_task = None
 
-        return self.service.set_startup_apply_enabled(enabled)
+        settings = self.service.set_startup_apply_enabled(enabled)
+        if enabled and hasattr(self.service, "apply_startup_mode"):
+            await self.service.apply_startup_mode()
+        elif not enabled and hasattr(self.service, "disable_startup_target_runtime"):
+            await self.service.disable_startup_target_runtime()
+        if hasattr(self.service, "sync_home_button_navigation_state"):
+            await self.service.sync_home_button_navigation_state()
+        return settings
+
+    async def set_home_button_enabled(self, enabled):
+        return await self.service.set_home_button_enabled(enabled)
 
     async def set_rumble_enabled(self, enabled):
         return await self.service.set_rumble_enabled(enabled)
@@ -1022,6 +1208,7 @@ class Plugin:
             if hasattr(self.service, "stop_brightness_dial_fixer"):
                 await self.service.stop_brightness_dial_fixer()
             await self.service.stop_rumble_fixer()
+        plugin_settings.reset_settings()
 
     async def _migration(self):
         decky.logger.info("Migrating DeckyZone")

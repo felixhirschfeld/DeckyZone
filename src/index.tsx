@@ -1,4 +1,5 @@
 import {
+  Navigation,
   ButtonItem,
   PanelSection,
   PanelSectionRow,
@@ -25,6 +26,7 @@ type MissingGlyphFixGameSettings = {
 
 type PluginSettings = {
   startupApplyEnabled: boolean
+  homeButtonEnabled: boolean
   brightnessDialFixEnabled: boolean
   inputplumberAvailable: boolean
   rumbleEnabled: boolean
@@ -68,6 +70,7 @@ type SteamAppsClient = {
 const getStatus = callable<[], PluginStatus>('get_status')
 const getSettings = callable<[], PluginSettings>('get_settings')
 const setStartupApplyEnabled = callable<[boolean], PluginSettings>('set_startup_apply_enabled')
+const setHomeButtonEnabled = callable<[boolean], PluginSettings>('set_home_button_enabled')
 const setBrightnessDialFixEnabled = callable<[boolean], PluginSettings>('set_brightness_dial_fix_enabled')
 const setMissingGlyphFixEnabled = callable<[string, boolean], PluginSettings>('set_missing_glyph_fix_enabled')
 const setMissingGlyphFixTrackpadsDisabled = callable<[string, boolean], PluginSettings>('set_missing_glyph_fix_trackpads_disabled')
@@ -79,15 +82,20 @@ const testRumble = callable<[], boolean>('test_rumble')
 const DEFAULT_APP_ID = '0'
 const ACTIVE_GAME_POLL_INTERVAL_MS = 1000
 const DEFAULT_STARTUP_DESCRIPTION = 'Restores the Zotac controller after boot and enables the right brightness dial.'
+const STARTUP_HOME_BUTTON_DESCRIPTION = ' Home short opens SteamUI Home while this startup target is active.'
+const HOME_BUTTON_TOGGLE_DESCRIPTION =
+  'When enabled, Zotac Home short opens SteamUI Home while Startup Target or Xbox Elite Mode is active.'
 const DEFAULT_BRIGHTNESS_DIAL_FIX_DESCRIPTION = 'Enable the right dial brightness.'
 const DEFAULT_RUMBLE_DESCRIPTION = 'Change and test vibration intensity.'
 const RUMBLE_UNAVAILABLE_MESSAGE = 'Rumble device is not available.'
 const NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION = 'Launch a game to enable this per-game Xbox Elite Mode.'
+const GLYPH_FIX_HOME_BUTTON_DESCRIPTION = ' Home short opens SteamUI Home while this Xbox Elite Mode is active.'
 const DISABLE_TRACKPADS_DESCRIPTION = 'Turns off the trackpads while this glyph fix is active for the current game.'
 const STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE = 'Steam Input state unavailable.'
 const BRIGHTNESS_DIAL_FIX_STEP = 5
 
 let brightnessDialFixEnabled = false
+let homeButtonEnabled = false
 let currentBrightnessPercent = 50
 let brightnessChangeRegistration: { unregister?: () => void } | null = null
 let brightnessDialFixEventListener: ((direction: BrightnessDialDirection) => void) | null = null
@@ -101,6 +109,10 @@ function getStartupDescription(status: PluginStatus, settings: PluginSettings) {
 
   if (status.state === 'failed' || status.state === 'disabled' || status.state === 'unsupported') {
     return status.message
+  }
+
+  if (settings.homeButtonEnabled) {
+    return `${DEFAULT_STARTUP_DESCRIPTION}${STARTUP_HOME_BUTTON_DESCRIPTION}`
   }
 
   return DEFAULT_STARTUP_DESCRIPTION
@@ -128,6 +140,10 @@ function clampBrightnessPercent(value: number) {
 
 function setBrightnessDialFixRuntimeEnabled(enabled: boolean) {
   brightnessDialFixEnabled = enabled
+}
+
+function setHomeButtonRuntimeEnabled(enabled: boolean) {
+  homeButtonEnabled = enabled
 }
 
 function applyBrightnessDialDelta(delta: number) {
@@ -194,6 +210,7 @@ function getBootstrapSettings() {
 
 function setBootstrapSnapshot(nextStatus: PluginStatus, nextSettings: PluginSettings) {
   setBrightnessDialFixRuntimeEnabled(nextSettings.brightnessDialFixEnabled)
+  setHomeButtonRuntimeEnabled(nextSettings.homeButtonEnabled)
   bootstrapState = {
     state: 'ready',
     snapshot: {
@@ -219,6 +236,7 @@ function cacheBootstrapStatus(nextStatus: PluginStatus) {
 
 function cacheBootstrapSettings(nextSettings: PluginSettings) {
   setBrightnessDialFixRuntimeEnabled(nextSettings.brightnessDialFixEnabled)
+  setHomeButtonRuntimeEnabled(nextSettings.homeButtonEnabled)
 
   if (bootstrapState.state !== 'ready') {
     return
@@ -365,12 +383,19 @@ function getActiveGameIconSource(activeGame: ActiveGame | null) {
   return null
 }
 
-function getMissingGlyphFixDescription(activeGame: ActiveGame | null): ReactNode {
+function getMissingGlyphFixDescription(activeGame: ActiveGame | null, settings: PluginSettings): ReactNode {
   if (!activeGame) {
+    if (settings.homeButtonEnabled) {
+      return `${NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION}${GLYPH_FIX_HOME_BUTTON_DESCRIPTION}`
+    }
+
     return NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION
   }
 
   const iconSource = getActiveGameIconSource(activeGame)
+  const description = settings.homeButtonEnabled
+    ? `Fixes missing glyphs for ${activeGame.display_name}. This setting is per-game.${GLYPH_FIX_HOME_BUTTON_DESCRIPTION}`
+    : `Fixes missing glyphs for ${activeGame.display_name}. This setting is per-game.`
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -382,7 +407,7 @@ function getMissingGlyphFixDescription(activeGame: ActiveGame | null): ReactNode
           whiteSpace: 'nowrap',
         }}
       >
-        {`Fixes missing glyphs for ${activeGame.display_name}. This setting is per-game.`}
+        {description}
       </div>
     </div>
   )
@@ -452,6 +477,7 @@ function Content() {
   const [activeGame, setActiveGame] = useState<ActiveGame | null>(getActiveGame())
   const [rumbleIntensityDraft, setRumbleIntensityDraft] = useState(75)
   const [savingStartup, setSavingStartup] = useState(false)
+  const [savingHomeButton, setSavingHomeButton] = useState(false)
   const [savingBrightnessDialFix, setSavingBrightnessDialFix] = useState(false)
   const [savingMissingGlyphFix, setSavingMissingGlyphFix] = useState(false)
   const [savingMissingGlyphFixTrackpads, setSavingMissingGlyphFixTrackpads] = useState(false)
@@ -493,6 +519,24 @@ function Content() {
       })
     } finally {
       setSavingStartup(false)
+    }
+  }
+
+  const handleHomeButtonToggleChange = async (enabled: boolean) => {
+    setSavingHomeButton(true)
+    try {
+      const nextSettings = await setHomeButtonEnabled(enabled)
+      cacheBootstrapSettings(nextSettings)
+      setBootstrap(getBootstrapState())
+      setSettings(nextSettings)
+      setHomeButtonRuntimeEnabled(nextSettings.homeButtonEnabled)
+    } catch (error) {
+      setStatus({
+        state: 'failed',
+        message: `Failed to update Home button setting: ${String(error)}`,
+      })
+    } finally {
+      setSavingHomeButton(false)
     }
   }
 
@@ -790,6 +834,15 @@ function Content() {
       </PanelSectionRow>
       <PanelSectionRow>
         <ToggleField
+          label="Enable Home Button"
+          checked={settings.homeButtonEnabled}
+          onChange={(value: boolean) => void handleHomeButtonToggleChange(value)}
+          disabled={savingHomeButton}
+          description={HOME_BUTTON_TOGGLE_DESCRIPTION}
+        />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ToggleField
           label="Brightness Dial"
           checked={settings.brightnessDialFixEnabled}
           onChange={(value: boolean) => void handleBrightnessDialFixToggleChange(value)}
@@ -847,7 +900,7 @@ function Content() {
           checked={isMissingGlyphFixEnabled}
           onChange={(value: boolean) => void handleMissingGlyphFixToggleChange(value)}
           disabled={!activeGame || savingMissingGlyphFix}
-          description={getMissingGlyphFixDescription(activeGame)}
+          description={getMissingGlyphFixDescription(activeGame, settings)}
         />
       </PanelSectionRow>
       {activeGame && isMissingGlyphFixEnabled && shouldShowSteamInputDisabledWarning && (
@@ -874,6 +927,14 @@ export default definePlugin(() => {
   registerBrightnessDialFixListeners()
   RunningApps.register()
   void startBootstrap()
+  const unregisterHomeNavigationListener = addEventListener('zotac_home_short_pressed', () => {
+    if (!homeButtonEnabled) {
+      return
+    }
+
+    Navigation.Navigate('/library/home')
+    Navigation.CloseSideMenus()
+  })
   const unregisterActiveGameSync = RunningApps.listenActiveChange((nextActiveGame) => {
     void syncActiveGameTarget(nextActiveGame?.appid ?? DEFAULT_APP_ID)
   })
@@ -885,6 +946,7 @@ export default definePlugin(() => {
     content: <Content />,
     icon: <FaSlidersH />,
     onDismount() {
+      removeEventListener('zotac_home_short_pressed', unregisterHomeNavigationListener)
       unregisterActiveGameSync()
       RunningApps.unregister()
       cleanupBrightnessDialFixListeners()
