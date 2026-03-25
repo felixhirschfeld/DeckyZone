@@ -1,4 +1,14 @@
-import { ButtonItem, PanelSection, PanelSectionRow, Router, SliderField, staticClasses, SteamSpinner, ToggleField } from '@decky/ui'
+import {
+  ButtonItem,
+  PanelSection,
+  PanelSectionRow,
+  Router,
+  SliderField,
+  gamepadDialogClasses,
+  staticClasses,
+  SteamSpinner,
+  ToggleField,
+} from '@decky/ui'
 import { addEventListener, callable, definePlugin, removeEventListener } from '@decky/api'
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -35,14 +45,25 @@ type ActiveGame = {
 type BrightnessDialDirection = 'up' | 'down'
 type ActiveGameChangedHandler = (newGame: ActiveGame | null, oldGame: ActiveGame | null) => void
 type UnregisterFn = () => void
+type SteamInputDiagnosticAppDetails = {
+  bShowControllerConfig?: boolean
+  eEnableThirdPartyControllerConfiguration?: number
+  eSteamInputControllerMask?: number
+}
 type BootstrapSnapshot = {
   status: PluginStatus
   settings: PluginSettings
 }
-type BootstrapState =
-  | { state: 'loading' }
-  | { state: 'ready'; snapshot: BootstrapSnapshot }
-  | { state: 'error'; message: string }
+type BootstrapState = { state: 'loading' } | { state: 'ready'; snapshot: BootstrapSnapshot } | { state: 'error'; message: string }
+type SteamInputDiagnosticState =
+  | { state: 'idle' }
+  | { state: 'loading'; appId: string }
+  | { state: 'ready'; appId: string; details: SteamInputDiagnosticAppDetails }
+  | { state: 'unavailable'; appId: string; message: string }
+type SteamAppsClient = {
+  GetCachedAppDetails?: (appId: number) => Promise<unknown>
+  RegisterForAppDetails?: (appId: number, callback: (details: unknown) => void) => { unregister?: () => void }
+}
 
 const getStatus = callable<[], PluginStatus>('get_status')
 const getSettings = callable<[], PluginSettings>('get_settings')
@@ -57,12 +78,13 @@ const testRumble = callable<[], boolean>('test_rumble')
 
 const DEFAULT_APP_ID = '0'
 const ACTIVE_GAME_POLL_INTERVAL_MS = 1000
-const DEFAULT_STARTUP_DESCRIPTION = 'Restores the Zotac controller after boot.'
+const DEFAULT_STARTUP_DESCRIPTION = 'Restores the Zotac controller after boot and enables the right brightness dial.'
 const DEFAULT_BRIGHTNESS_DIAL_FIX_DESCRIPTION = 'Enable the right dial brightness.'
 const DEFAULT_RUMBLE_DESCRIPTION = 'Change and test vibration intensity.'
 const RUMBLE_UNAVAILABLE_MESSAGE = 'Rumble device is not available.'
-const NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION = 'Launch a game to enable this glyph fix.'
+const NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION = 'Launch a game to enable this per-game Xbox Elite Mode.'
 const DISABLE_TRACKPADS_DESCRIPTION = 'Turns off the trackpads while this glyph fix is active for the current game.'
+const STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE = 'Steam Input state unavailable.'
 const BRIGHTNESS_DIAL_FIX_STEP = 5
 
 let brightnessDialFixEnabled = false
@@ -360,10 +382,59 @@ function getMissingGlyphFixDescription(activeGame: ActiveGame | null): ReactNode
           whiteSpace: 'nowrap',
         }}
       >
-        {`For ${activeGame.display_name}.`}
+        {`Fixes missing glyphs for ${activeGame.display_name}. This setting is per-game.`}
       </div>
     </div>
   )
+}
+
+function normalizeSteamInputDiagnosticDetails(rawDetails: unknown): SteamInputDiagnosticAppDetails | null {
+  let parsedDetails = rawDetails
+
+  if (typeof parsedDetails === 'string') {
+    try {
+      parsedDetails = JSON.parse(parsedDetails)
+    } catch {
+      return null
+    }
+  }
+
+  if (!parsedDetails || typeof parsedDetails !== 'object') {
+    return null
+  }
+
+  const details = parsedDetails as Record<string, unknown>
+  const thirdPartyControllerConfiguration = details.eEnableThirdPartyControllerConfiguration
+  const steamInputControllerMask = details.eSteamInputControllerMask
+  const showControllerConfig = details.bShowControllerConfig
+
+  if (
+    typeof thirdPartyControllerConfiguration !== 'number' &&
+    typeof steamInputControllerMask !== 'number' &&
+    typeof showControllerConfig !== 'boolean'
+  ) {
+    return null
+  }
+
+  return {
+    bShowControllerConfig: typeof showControllerConfig === 'boolean' ? showControllerConfig : undefined,
+    eEnableThirdPartyControllerConfiguration:
+      typeof thirdPartyControllerConfiguration === 'number' ? thirdPartyControllerConfiguration : undefined,
+    eSteamInputControllerMask: typeof steamInputControllerMask === 'number' ? steamInputControllerMask : undefined,
+  }
+}
+
+function getSteamInputDiagnosticStatus(details: SteamInputDiagnosticAppDetails) {
+  switch (details.eEnableThirdPartyControllerConfiguration) {
+    case 0:
+      return details.bShowControllerConfig === false ? 'Steam Input disabled' : 'Mixed or unknown Steam Input state'
+    case 1:
+      return details.bShowControllerConfig === true ? 'Steam Input enabled/default' : 'Mixed or unknown Steam Input state'
+    case 2:
+      return 'Steam Input enabled/forced'
+    default:
+      return 'Mixed or unknown Steam Input state'
+  }
 }
 
 async function syncActiveGameTarget(appId: string) {
@@ -388,6 +459,7 @@ function Content() {
   const [testingRumble, setTestingRumble] = useState(false)
   const [rumbleMessage, setRumbleMessage] = useState<string | null>(null)
   const [rumbleMessageKind, setRumbleMessageKind] = useState<'success' | 'error' | null>(null)
+  const [steamInputDiagnostic, setSteamInputDiagnostic] = useState<SteamInputDiagnosticState>({ state: 'idle' })
   const rumbleIntensityLatestValue = useRef(75)
   const rumbleIntensitySaveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -598,6 +670,80 @@ function Content() {
     }
   }, [])
 
+  const activeGameGlyphFixSettings = activeGame && settings ? settings.missingGlyphFixGames[activeGame.appid] : undefined
+  const isMissingGlyphFixEnabled = Boolean(activeGameGlyphFixSettings)
+  const isTrackpadsDisabled = activeGameGlyphFixSettings?.disableTrackpads ?? true
+
+  useEffect(() => {
+    if (!activeGame || !isMissingGlyphFixEnabled) {
+      setSteamInputDiagnostic({ state: 'idle' })
+      return
+    }
+
+    const steamApps = window.SteamClient?.Apps as SteamAppsClient | undefined
+    const numericAppId = Number(activeGame.appid)
+
+    if (!steamApps?.GetCachedAppDetails || Number.isNaN(numericAppId)) {
+      setSteamInputDiagnostic({
+        state: 'unavailable',
+        appId: activeGame.appid,
+        message: STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE,
+      })
+      return
+    }
+
+    let cancelled = false
+    setSteamInputDiagnostic({ state: 'loading', appId: activeGame.appid })
+
+    const updateDiagnosticDetails = (rawDetails: unknown) => {
+      if (cancelled) {
+        return
+      }
+
+      const nextDetails = normalizeSteamInputDiagnosticDetails(rawDetails)
+      if (!nextDetails) {
+        setSteamInputDiagnostic({
+          state: 'unavailable',
+          appId: activeGame.appid,
+          message: STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE,
+        })
+        return
+      }
+
+      setSteamInputDiagnostic({
+        state: 'ready',
+        appId: activeGame.appid,
+        details: nextDetails,
+      })
+    }
+
+    void steamApps
+      .GetCachedAppDetails(numericAppId)
+      .then((details) => {
+        updateDiagnosticDetails(details)
+      })
+      .catch(() => {
+        if (cancelled) {
+          return
+        }
+
+        setSteamInputDiagnostic({
+          state: 'unavailable',
+          appId: activeGame.appid,
+          message: STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE,
+        })
+      })
+
+    const registration = steamApps.RegisterForAppDetails?.(numericAppId, (details) => {
+      updateDiagnosticDetails(details)
+    })
+
+    return () => {
+      cancelled = true
+      registration?.unregister?.()
+    }
+  }, [activeGame, isMissingGlyphFixEnabled])
+
   if (bootstrap.state === 'loading') {
     return (
       <PanelSection title="Controller">
@@ -612,9 +758,7 @@ function Content() {
     return (
       <PanelSection title="Controller">
         <PanelSectionRow>
-          <div style={{ color: 'red' }}>
-            {bootstrap.message}
-          </div>
+          <div style={{ color: 'red' }}>{bootstrap.message}</div>
         </PanelSectionRow>
       </PanelSection>
     )
@@ -630,9 +774,8 @@ function Content() {
     )
   }
 
-  const activeGameGlyphFixSettings = activeGame ? settings.missingGlyphFixGames[activeGame.appid] : undefined
-  const isMissingGlyphFixEnabled = Boolean(activeGameGlyphFixSettings)
-  const isTrackpadsDisabled = activeGameGlyphFixSettings?.disableTrackpads ?? true
+  const shouldShowSteamInputDisabledWarning =
+    steamInputDiagnostic.state === 'ready' && getSteamInputDiagnosticStatus(steamInputDiagnostic.details) === 'Steam Input disabled'
 
   return (
     <PanelSection title="Controller">
@@ -647,27 +790,7 @@ function Content() {
       </PanelSectionRow>
       <PanelSectionRow>
         <ToggleField
-          label="Missing Glyph Fix"
-          checked={isMissingGlyphFixEnabled}
-          onChange={(value: boolean) => void handleMissingGlyphFixToggleChange(value)}
-          disabled={!activeGame || savingMissingGlyphFix}
-          description={getMissingGlyphFixDescription(activeGame)}
-        />
-      </PanelSectionRow>
-      {activeGame && isMissingGlyphFixEnabled && (
-        <PanelSectionRow>
-          <ToggleField
-            label="Disable Trackpads"
-            checked={isTrackpadsDisabled}
-            onChange={(value: boolean) => void handleMissingGlyphFixTrackpadsChange(value)}
-            disabled={savingMissingGlyphFix || savingMissingGlyphFixTrackpads}
-            description={DISABLE_TRACKPADS_DESCRIPTION}
-          />
-        </PanelSectionRow>
-      )}
-      <PanelSectionRow>
-        <ToggleField
-          label="Brightness Dial Fix"
+          label="Brightness Dial"
           checked={settings.brightnessDialFixEnabled}
           onChange={(value: boolean) => void handleBrightnessDialFixToggleChange(value)}
           disabled={savingBrightnessDialFix}
@@ -717,6 +840,31 @@ function Content() {
             </PanelSectionRow>
           )}
         </>
+      )}
+      <PanelSectionRow>
+        <ToggleField
+          label="Xbox Elite Mode"
+          checked={isMissingGlyphFixEnabled}
+          onChange={(value: boolean) => void handleMissingGlyphFixToggleChange(value)}
+          disabled={!activeGame || savingMissingGlyphFix}
+          description={getMissingGlyphFixDescription(activeGame)}
+        />
+      </PanelSectionRow>
+      {activeGame && isMissingGlyphFixEnabled && shouldShowSteamInputDisabledWarning && (
+        <PanelSectionRow>
+          <div className={gamepadDialogClasses.FieldDescription}>Steam Input disabled</div>
+        </PanelSectionRow>
+      )}
+      {activeGame && isMissingGlyphFixEnabled && (
+        <PanelSectionRow>
+          <ToggleField
+            label="Disable Trackpads"
+            checked={isTrackpadsDisabled}
+            onChange={(value: boolean) => void handleMissingGlyphFixTrackpadsChange(value)}
+            disabled={savingMissingGlyphFix || savingMissingGlyphFixTrackpads}
+            description={DISABLE_TRACKPADS_DESCRIPTION}
+          />
+        </PanelSectionRow>
       )}
     </PanelSection>
   )
