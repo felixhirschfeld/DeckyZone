@@ -4,4 +4,8 @@ TBD.
 
 ## Installation
 
-Download the latest `DeckyZone.zip` from the [latest release](https://github.com/felixhirschfeld/DeckyZone/releases/latest) and install it with Decky Loader.
+Run the following in terminal:
+
+```bash
+curl -L https://raw.githubusercontent.com/felixhirschfeld/DeckyZone/main/install.sh | sh
+```
