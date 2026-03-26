@@ -25,6 +25,7 @@ READY_POLL_INTERVAL_SECONDS = 0.5
 DEFAULT_APP_ID = "0"
 STARTUP_MODE = "deck-uhid"
 MISSING_GLYPH_FIX_TARGET = "xbox-elite"
+DEFAULT_INPUTPLUMBER_PROFILE_PATH = "/usr/share/inputplumber/profiles/default.yaml"
 ZOTAC_MOUSE_DEVICE_NAME = "ZOTAC Gaming Zone Mouse"
 ZOTAC_KEYBOARD_DEVICE_NAME = "ZOTAC Gaming Zone Keyboard"
 DEFAULT_RUMBLE_REAPPLY_INTERVAL_SECONDS = 2
@@ -135,6 +136,9 @@ class DeckyZoneService:
         self._home_button_device_path = None
         self._home_button_task = None
         self._home_button_running = False
+        self._home_button_override_active = False
+        self._home_button_original_profile_path = None
+        self._home_button_original_profile_yaml = None
         self._rumble_available = False
         self._rumble_device_path = None
         self._rumble_task = None
@@ -248,6 +252,188 @@ class DeckyZoneService:
         )
         self._inputplumber_available = True
 
+    def _parse_busctl_string_output(self, output):
+        text = (output or "").strip()
+        if not text:
+            return ""
+
+        if " " not in text:
+            return text
+
+        _, encoded_value = text.split(" ", 1)
+        encoded_value = encoded_value.strip()
+        if len(encoded_value) >= 2 and encoded_value[0] == encoded_value[-1] == '"':
+            encoded_value = encoded_value[1:-1]
+
+        return bytes(encoded_value, "utf-8").decode("unicode_escape")
+
+    def _get_inputplumber_profile_path(self):
+        result = self.command_runner(
+            self._busctl_args(
+                "get-property",
+                "org.shadowblip.InputPlumber",
+                INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "ProfilePath",
+            ),
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.get_env(),
+        )
+        self._inputplumber_available = True
+        return self._parse_busctl_string_output(result.stdout)
+
+    def _get_inputplumber_profile_yaml(self):
+        result = self.command_runner(
+            self._busctl_args(
+                "call",
+                "org.shadowblip.InputPlumber",
+                INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "GetProfileYaml",
+            ),
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.get_env(),
+        )
+        self._inputplumber_available = True
+        return self._parse_busctl_string_output(result.stdout)
+
+    def _load_inputplumber_profile_path(self, profile_path):
+        self.command_runner(
+            self._busctl_args(
+                "call",
+                "org.shadowblip.InputPlumber",
+                INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "LoadProfilePath",
+                "s",
+                profile_path,
+            ),
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.get_env(),
+        )
+        self._inputplumber_available = True
+
+    def _load_inputplumber_profile_from_yaml(self, profile_yaml):
+        self.command_runner(
+            self._busctl_args(
+                "call",
+                "org.shadowblip.InputPlumber",
+                INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "LoadProfileFromYaml",
+                "s",
+                profile_yaml,
+            ),
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.get_env(),
+        )
+        self._inputplumber_available = True
+
+    def _build_home_button_mapping_lines(self, indent):
+        return [
+            f"{indent}- name: QuickAccess2",
+            f"{indent}  source_event:",
+            f"{indent}    gamepad:",
+            f"{indent}      button: QuickAccess2",
+            f"{indent}  target_events:",
+            f"{indent}    - keyboard: KeyF18",
+        ]
+
+    def _build_home_button_override_profile_yaml(self, profile_yaml):
+        lines = profile_yaml.splitlines()
+        trailing_newline = profile_yaml.endswith("\n")
+        quick_access_index = None
+        quick_access_indent = ""
+
+        for index, line in enumerate(lines):
+            stripped = line.lstrip()
+            if not stripped.startswith("- name:"):
+                continue
+
+            if stripped.split(":", 1)[1].strip() != "QuickAccess2":
+                continue
+
+            quick_access_index = index
+            quick_access_indent = line[: len(line) - len(stripped)]
+            break
+
+        if quick_access_index is not None:
+            end_index = len(lines)
+            for index in range(quick_access_index + 1, len(lines)):
+                stripped = lines[index].lstrip()
+                indent = lines[index][: len(lines[index]) - len(stripped)]
+                if stripped.startswith("- name:") and indent == quick_access_indent:
+                    end_index = index
+                    break
+
+            lines = (
+                lines[:quick_access_index]
+                + self._build_home_button_mapping_lines(quick_access_indent)
+                + lines[end_index:]
+            )
+        else:
+            mapping_indent = ""
+            insert_index = len(lines)
+            for index, line in enumerate(lines):
+                if line.strip() == "mapping:":
+                    mapping_indent = line[: len(line) - len(line.lstrip())]
+                    insert_index = len(lines)
+                    break
+            else:
+                lines.append("mapping:")
+                insert_index = len(lines)
+
+            lines.extend(self._build_home_button_mapping_lines(f"{mapping_indent}  "))
+
+        override_yaml = "\n".join(lines)
+        if trailing_newline or not override_yaml.endswith("\n"):
+            override_yaml = f"{override_yaml}\n"
+        return override_yaml
+
+    def _ensure_home_button_original_profile(self):
+        if self._home_button_original_profile_yaml is not None:
+            return True
+
+        self._home_button_original_profile_path = self._get_inputplumber_profile_path() or None
+        self._home_button_original_profile_yaml = self._get_inputplumber_profile_yaml()
+        return True
+
+    def _load_home_button_override_profile(self):
+        self._ensure_home_button_original_profile()
+        base_profile_yaml = self._home_button_original_profile_yaml or ""
+        override_profile_yaml = self._build_home_button_override_profile_yaml(base_profile_yaml)
+        self._load_inputplumber_profile_from_yaml(override_profile_yaml)
+        self._home_button_override_active = True
+        return True
+
+    def _restore_home_button_profile(self):
+        if not self._home_button_override_active:
+            return True
+
+        if self._home_button_original_profile_path:
+            self._load_inputplumber_profile_path(self._home_button_original_profile_path)
+        elif self._home_button_original_profile_yaml:
+            self._load_inputplumber_profile_from_yaml(self._home_button_original_profile_yaml)
+        else:
+            self._load_inputplumber_profile_path(DEFAULT_INPUTPLUMBER_PROFILE_PATH)
+
+        self._home_button_override_active = False
+        self._home_button_original_profile_path = None
+        self._home_button_original_profile_yaml = None
+        return True
+
     def _get_zotac_mouse_candidate_paths(self):
         input_class_path = Path("/sys/class/input")
         if not input_class_path.exists():
@@ -355,7 +541,7 @@ class DeckyZoneService:
 
     async def _home_button_loop(self):
         while self._home_button_running:
-            device_path = self._resolve_zotac_keyboard_device_path()
+            device_path = self._resolve_inputplumber_keyboard_device_path()
             self._home_button_device_path = device_path
 
             if not device_path:
@@ -382,7 +568,7 @@ class DeckyZoneService:
                 raise
             except Exception as error:
                 self.logger.warning(
-                    f"Home button listener lost Zotac keyboard device: {error}"
+                    f"Home button listener lost InputPlumber Keyboard device: {error}"
                 )
             finally:
                 if fd is not None:
@@ -422,15 +608,27 @@ class DeckyZoneService:
 
     async def _enable_home_button_navigation(self):
         try:
+            self._load_home_button_override_profile()
             await self.start_home_button_listener()
             return True
         except Exception as error:
             self.logger.warning(f"Failed to enable Home button navigation: {error}")
+            try:
+                await self.stop_home_button_listener()
+            except Exception:
+                pass
+            try:
+                self._restore_home_button_profile()
+            except Exception as restore_error:
+                self.logger.warning(
+                    f"Failed to restore Home button profile after error: {restore_error}"
+                )
             return False
 
     async def _disable_home_button_navigation(self):
         try:
             await self.stop_home_button_listener()
+            self._restore_home_button_profile()
             return True
         except Exception as error:
             self.logger.warning(f"Failed to disable Home button navigation: {error}")

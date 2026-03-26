@@ -82,14 +82,12 @@ const testRumble = callable<[], boolean>('test_rumble')
 const DEFAULT_APP_ID = '0'
 const ACTIVE_GAME_POLL_INTERVAL_MS = 1000
 const DEFAULT_STARTUP_DESCRIPTION = 'Restores the Zotac controller after boot and enables the right brightness dial.'
-const STARTUP_HOME_BUTTON_DESCRIPTION = ' Home short opens SteamUI Home while this startup target is active.'
 const HOME_BUTTON_TOGGLE_DESCRIPTION =
   'When enabled, Zotac Home short opens SteamUI Home while Startup Target or Xbox Elite Mode is active.'
 const DEFAULT_BRIGHTNESS_DIAL_FIX_DESCRIPTION = 'Enable the right dial brightness.'
 const DEFAULT_RUMBLE_DESCRIPTION = 'Change and test vibration intensity.'
 const RUMBLE_UNAVAILABLE_MESSAGE = 'Rumble device is not available.'
 const NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION = 'Launch a game to enable this per-game Xbox Elite Mode.'
-const GLYPH_FIX_HOME_BUTTON_DESCRIPTION = ' Home short opens SteamUI Home while this Xbox Elite Mode is active.'
 const DISABLE_TRACKPADS_DESCRIPTION = 'Turns off the trackpads while this glyph fix is active for the current game.'
 const STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE = 'Steam Input state unavailable.'
 const BRIGHTNESS_DIAL_FIX_STEP = 5
@@ -112,7 +110,7 @@ function getStartupDescription(status: PluginStatus, settings: PluginSettings) {
   }
 
   if (settings.homeButtonEnabled) {
-    return `${DEFAULT_STARTUP_DESCRIPTION}${STARTUP_HOME_BUTTON_DESCRIPTION}`
+    return `${DEFAULT_STARTUP_DESCRIPTION} ${getHomeButtonManagedDescription('startup')}`
   }
 
   return DEFAULT_STARTUP_DESCRIPTION
@@ -144,6 +142,12 @@ function setBrightnessDialFixRuntimeEnabled(enabled: boolean) {
 
 function setHomeButtonRuntimeEnabled(enabled: boolean) {
   homeButtonEnabled = enabled
+}
+
+function getHomeButtonManagedDescription(scope: 'startup' | 'glyph') {
+  return scope === 'startup'
+    ? 'Home short opens SteamUI Home while this startup target is active.'
+    : 'Home short opens SteamUI Home while this Xbox Elite Mode is active.'
 }
 
 function applyBrightnessDialDelta(delta: number) {
@@ -386,7 +390,7 @@ function getActiveGameIconSource(activeGame: ActiveGame | null) {
 function getMissingGlyphFixDescription(activeGame: ActiveGame | null, settings: PluginSettings): ReactNode {
   if (!activeGame) {
     if (settings.homeButtonEnabled) {
-      return `${NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION}${GLYPH_FIX_HOME_BUTTON_DESCRIPTION}`
+      return `${NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION} ${getHomeButtonManagedDescription('glyph')}`
     }
 
     return NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION
@@ -394,7 +398,7 @@ function getMissingGlyphFixDescription(activeGame: ActiveGame | null, settings: 
 
   const iconSource = getActiveGameIconSource(activeGame)
   const description = settings.homeButtonEnabled
-    ? `Fixes missing glyphs for ${activeGame.display_name}. This setting is per-game.${GLYPH_FIX_HOME_BUTTON_DESCRIPTION}`
+    ? `Fixes missing glyphs for ${activeGame.display_name}. This setting is per-game. ${getHomeButtonManagedDescription('glyph')}`
     : `Fixes missing glyphs for ${activeGame.display_name}. This setting is per-game.`
 
   return (

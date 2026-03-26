@@ -156,7 +156,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             status,
             {"state": "applied", "message": "Startup mode re-applied: deck-uhid."},
         )
-        self.assertEqual(len(commands), 2)
+        self.assertEqual(len(commands), 5)
         self.assertEqual(
             commands[0][0],
             [
@@ -184,6 +184,20 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "mouse",
             ],
         )
+        self.assertEqual(
+            commands[2][0],
+            [
+                "busctl",
+                "get-property",
+                "org.shadowblip.InputPlumber",
+                main.INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "ProfilePath",
+            ],
+        )
+        self.assertEqual(commands[3][0][5], "GetProfileYaml")
+        self.assertEqual(commands[4][0][5], "LoadProfileFromYaml")
+        self.assertIn("KeyF18", commands[4][0][-1])
         self.assertEqual(
             listener_calls,
             ["start"],
@@ -392,32 +406,27 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result)
         self.assertEqual(grabbed, ["grab"])
+        self.assertEqual(commands[0][5], "ProfileName")
         self.assertEqual(
-            commands,
+            commands[1],
             [
-                [
-                    "busctl",
-                    "get-property",
-                    "org.shadowblip.InputPlumber",
-                    main.INPUTPLUMBER_DBUS_PATH,
-                    "org.shadowblip.Input.CompositeDevice",
-                    "ProfileName",
-                ],
-                [
-                    "busctl",
-                    "call",
-                    "org.shadowblip.InputPlumber",
-                    main.INPUTPLUMBER_DBUS_PATH,
-                    "org.shadowblip.Input.CompositeDevice",
-                    "SetTargetDevices",
-                    "as",
-                    "3",
+                "busctl",
+                "call",
+                "org.shadowblip.InputPlumber",
+                main.INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "SetTargetDevices",
+                "as",
+                "3",
                 "xbox-elite",
                 "keyboard",
                 "mouse",
-                ],
             ],
         )
+        self.assertEqual(commands[2][5], "ProfilePath")
+        self.assertEqual(commands[3][5], "GetProfileYaml")
+        self.assertEqual(commands[4][5], "LoadProfileFromYaml")
+        self.assertIn("KeyF18", commands[4][-1])
         self.assertEqual(listener_calls, ["start"])
 
     async def test_sync_missing_glyph_fix_target_does_not_start_home_button_listener_when_disabled(self):
@@ -466,6 +475,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         service._grab_zotac_mouse_device = lambda: True
         service._release_zotac_mouse_device = lambda: released.append("release") or True
+        main.plugin_settings.set_home_button_enabled(False)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
         await service.sync_missing_glyph_fix_target("123")
@@ -503,6 +513,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         service._grab_zotac_mouse_device = lambda: True
         service._release_zotac_mouse_device = lambda: released.append("release") or True
+        main.plugin_settings.set_home_button_enabled(False)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
         await service.sync_missing_glyph_fix_target("123")
@@ -593,6 +604,117 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(calls, ["stop", "start"])
 
+    def test_build_home_button_override_profile_yaml_rewrites_quickaccess2_to_home(self):
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        base_profile = """version: 1
+kind: DeviceProfile
+name: Default
+mapping:
+  - name: QuickAccess2
+    source_event:
+      gamepad:
+        button: QuickAccess2
+    target_events:
+      - gamepad:
+          button: Screenshot
+  - name: Keyboard
+    source_event:
+      gamepad:
+        button: Keyboard
+    target_events:
+          - gamepad:
+              button: Guide
+"""
+
+        home_profile = service._build_home_button_override_profile_yaml(base_profile)
+
+        self.assertIn("- keyboard: KeyF18", home_profile)
+        self.assertNotIn("button: Screenshot", home_profile)
+
+    async def test_sync_home_button_navigation_state_loads_home_override_and_starts_inputplumber_keyboard_listener(self):
+        commands = []
+        loaded_profiles = []
+        listener_calls = []
+        encoded_profile = (
+            's "version: 1\\nkind: DeviceProfile\\nname: Default\\nmapping:\\n'
+            '  - name: QuickAccess2\\n'
+            '    source_event:\\n'
+            '      gamepad:\\n'
+            '        button: QuickAccess2\\n'
+            '    target_events:\\n'
+            '      - gamepad:\\n'
+            '          button: Screenshot\\n"\n'
+        )
+
+        def runner(command, **kwargs):
+            commands.append(command)
+            if command[:2] == ["busctl", "get-property"] and command[-1] == "ProfileName":
+                return _CompletedProcess(returncode=0, stdout='s "Default"\n')
+            if command[:2] == ["busctl", "get-property"] and command[-1] == "ProfilePath":
+                return _CompletedProcess(
+                    returncode=0,
+                    stdout='s "/usr/share/inputplumber/profiles/default.yaml"\n',
+                )
+            if command[:2] == ["busctl", "call"] and command[5] == "GetProfileYaml":
+                return _CompletedProcess(returncode=0, stdout=encoded_profile)
+            if command[:2] == ["busctl", "call"] and command[5] == "LoadProfileFromYaml":
+                loaded_profiles.append(command[-1])
+                return _CompletedProcess(returncode=0)
+            return _CompletedProcess(returncode=0)
+
+        service = main.DeckyZoneService(
+            command_runner=runner,
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._startup_target_active = True
+        service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
+
+        result = await service.sync_home_button_navigation_state()
+
+        self.assertTrue(result)
+        self.assertIn(["busctl", "get-property", "org.shadowblip.InputPlumber", main.INPUTPLUMBER_DBUS_PATH, "org.shadowblip.Input.CompositeDevice", "ProfilePath"], commands)
+        self.assertEqual(listener_calls, ["start"])
+        self.assertEqual(len(loaded_profiles), 1)
+        self.assertIn("- keyboard: KeyF18", loaded_profiles[0])
+
+    async def test_sync_home_button_navigation_state_restores_original_profile_when_override_is_disabled(self):
+        commands = []
+        listener_calls = []
+        service = main.DeckyZoneService(
+            command_runner=lambda command, **kwargs: commands.append(command)
+            or _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._home_button_override_active = True
+        service._home_button_original_profile_path = "/usr/share/inputplumber/profiles/default.yaml"
+        service._home_button_original_profile_yaml = "version: 1\nkind: DeviceProfile\nname: Default\nmapping: []\n"
+        service.stop_home_button_listener = lambda: listener_calls.append("stop") or asyncio.sleep(0)
+        main.plugin_settings.set_home_button_enabled(False)
+
+        result = await service.sync_home_button_navigation_state()
+
+        self.assertTrue(result)
+        self.assertEqual(listener_calls, ["stop"])
+        self.assertIn(
+            [
+                "busctl",
+                "call",
+                "org.shadowblip.InputPlumber",
+                main.INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "LoadProfilePath",
+                "s",
+                "/usr/share/inputplumber/profiles/default.yaml",
+            ],
+            commands,
+        )
+
     async def test_handle_home_button_input_event_emits_home_short_press(self):
         emitted = []
         service = main.DeckyZoneService(
@@ -663,13 +785,14 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
         service.stop_home_button_listener = lambda: listener_calls.append("stop") or asyncio.sleep(0)
         main.plugin_settings.set_startup_apply_enabled(False)
+        main.plugin_settings.set_home_button_enabled(False)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
         await service.sync_missing_glyph_fix_target("123")
         result = await service.sync_missing_glyph_fix_target("0")
 
         self.assertTrue(result)
-        self.assertEqual(listener_calls, ["start", "stop"])
+        self.assertEqual(listener_calls, ["stop", "stop"])
         self.assertEqual(commands[-1], ["systemctl", "restart", "inputplumber"])
 
     async def test_sync_missing_glyph_fix_target_does_not_overwrite_startup_status(self):
@@ -1386,6 +1509,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         service._startup_target_active = True
         service._temporary_target_mode = main.MISSING_GLYPH_FIX_TARGET
+        main.plugin_settings.set_home_button_enabled(False)
 
         result = await service.disable_startup_target_runtime()
 
@@ -1692,7 +1816,6 @@ class FrontendSourceTests(unittest.TestCase):
 
         self.assertIn('title="Controller"', source)
         self.assertIn("ButtonItem", source)
-        self.assertIn("Field", source)
         self.assertIn("Router.MainRunningApp", source)
         self.assertIn('Startup Target', source)
         self.assertIn('Xbox Elite Mode', source)
@@ -1734,7 +1857,7 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn("void startBootstrap()", source)
         self.assertIn("Navigation.Navigate('/library/home')", source)
         self.assertIn("Navigation.CloseSideMenus()", source)
-        self.assertIn("if (!homeButtonEnabled)", source)
+        self.assertIn("if (!homeButtonEnabled) {", source)
         self.assertIn("'zotac_home_short_pressed'", source)
         self.assertIn("SteamSpinner", source)
         self.assertIn("if (bootstrap.state === 'loading')", source)
@@ -1792,6 +1915,12 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertNotIn("clearInterval(activeGamePollInterval)", source)
         self.assertNotIn("window.addEventListener(", source)
         self.assertNotIn("<strong>State:</strong>", source)
+        self.assertNotIn("Dropdown", source)
+        self.assertNotIn('label="Home Button Action"', source)
+        self.assertNotIn("childrenContainerWidth=\"fixed\"", source)
+        self.assertNotIn("homeButtonAction", source)
+        self.assertNotIn("type HomeButtonAction", source)
+        self.assertNotIn("set_home_button_action", source)
         self.assertNotIn('title="Startup Mode"', source)
         self.assertNotIn('title="Controller Fix"', source)
         self.assertNotIn('label="Controller Fix"', source)
