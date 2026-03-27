@@ -9,6 +9,7 @@ from pathlib import Path
 
 import decky
 import controller_targets
+import inputplumber_target_sync
 import plugin_update
 import plugin_settings
 
@@ -268,21 +269,6 @@ class DeckyZoneService:
         )
         self._inputplumber_available = True
 
-    def _parse_busctl_string_output(self, output):
-        text = (output or "").strip()
-        if not text:
-            return ""
-
-        if " " not in text:
-            return text
-
-        _, encoded_value = text.split(" ", 1)
-        encoded_value = encoded_value.strip()
-        if len(encoded_value) >= 2 and encoded_value[0] == encoded_value[-1] == '"':
-            encoded_value = encoded_value[1:-1]
-
-        return bytes(encoded_value, "utf-8").decode("unicode_escape")
-
     def _get_inputplumber_profile_path(self):
         result = self.command_runner(
             self._busctl_args(
@@ -299,7 +285,25 @@ class DeckyZoneService:
             env=self.get_env(),
         )
         self._inputplumber_available = True
-        return self._parse_busctl_string_output(result.stdout)
+        return inputplumber_target_sync.parse_busctl_string_output(result.stdout)
+
+    def _get_inputplumber_target_device_paths(self):
+        result = self.command_runner(
+            self._busctl_args(
+                "get-property",
+                "org.shadowblip.InputPlumber",
+                INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "TargetDevices",
+            ),
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.get_env(),
+        )
+        self._inputplumber_available = True
+        return inputplumber_target_sync.parse_busctl_array_output(result.stdout)
 
     def _get_inputplumber_profile_yaml(self):
         result = self.command_runner(
@@ -317,7 +321,7 @@ class DeckyZoneService:
             env=self.get_env(),
         )
         self._inputplumber_available = True
-        return self._parse_busctl_string_output(result.stdout)
+        return inputplumber_target_sync.parse_busctl_string_output(result.stdout)
 
     def _load_inputplumber_profile_path(self, profile_path):
         self.command_runner(
@@ -509,6 +513,31 @@ class DeckyZoneService:
 
         return None
 
+    async def _wait_for_inputplumber_target_devices(
+        self,
+        expected_count,
+        timeout=inputplumber_target_sync.TARGET_SETTLE_TIMEOUT_SECONDS,
+        interval=inputplumber_target_sync.TARGET_SETTLE_POLL_INTERVAL_SECONDS,
+    ):
+        return await inputplumber_target_sync.wait_for_target_devices(
+            get_target_device_paths=self._get_inputplumber_target_device_paths,
+            resolve_keyboard_device_path=self._resolve_inputplumber_keyboard_device_path,
+            mark_unavailable=lambda: setattr(self, "_inputplumber_available", False),
+            sleep=self.sleep,
+            expected_count=expected_count,
+            timeout=timeout,
+            interval=interval,
+        )
+
+    async def _apply_target_devices_with_retries(self, target_mode, include_mouse=True):
+        return await inputplumber_target_sync.apply_target_devices_with_retries(
+            apply_target_devices=self._apply_target_devices,
+            wait_for_target_devices_fn=self._wait_for_inputplumber_target_devices,
+            sleep=self.sleep,
+            target_mode=target_mode,
+            include_mouse=include_mouse,
+        )
+
     def _read_input_event_from_fd(self, fd):
         raw_event = os.read(fd, ctypes.sizeof(_InputEvent))
         if len(raw_event) != ctypes.sizeof(_InputEvent):
@@ -665,6 +694,21 @@ class DeckyZoneService:
     async def sync_home_button_navigation_state(self):
         return await self._sync_home_button_navigation_state()
 
+    def _should_enable_brightness_dial_fixer(self):
+        return self.settings_store.get_brightness_dial_fix_enabled() and (
+            self._startup_target_active
+            or self._temporary_target_mode == MISSING_GLYPH_FIX_TARGET
+        )
+
+    async def _sync_brightness_dial_fixer_state(self):
+        if self._should_enable_brightness_dial_fixer():
+            return await self.start_brightness_dial_fixer()
+
+        return await self.stop_brightness_dial_fixer()
+
+    async def sync_brightness_dial_fixer_state(self):
+        return await self._sync_brightness_dial_fixer_state()
+
     def _set_event_device_grab(self, fd, grabbed):
         self._ioctl(fd, EVIOCGRAB, ctypes.c_int(1 if grabbed else 0))
 
@@ -769,8 +813,12 @@ class DeckyZoneService:
             try:
                 if not await self.wait_for_inputplumber_dbus_silently():
                     return False
-                self._apply_target_devices(MISSING_GLYPH_FIX_TARGET)
+                if not await self._apply_target_devices_with_retries(
+                    MISSING_GLYPH_FIX_TARGET
+                ):
+                    return False
                 self._temporary_target_mode = MISSING_GLYPH_FIX_TARGET
+                await self._sync_brightness_dial_fixer_state()
                 await self._sync_home_button_navigation_state()
                 return trackpad_result
             except subprocess.CalledProcessError as error:
@@ -790,12 +838,14 @@ class DeckyZoneService:
             if self.settings_store.get_startup_apply_enabled():
                 if not await self.wait_for_inputplumber_dbus_silently():
                     return False
-                self._apply_target_devices(STARTUP_MODE)
+                if not await self._apply_target_devices_with_retries(STARTUP_MODE):
+                    return False
                 self._startup_target_active = True
             else:
                 self._restart_inputplumber()
                 self._startup_target_active = False
             self._temporary_target_mode = None
+            await self._sync_brightness_dial_fixer_state()
             await self._sync_home_button_navigation_state()
             return True
         except subprocess.CalledProcessError as error:
@@ -999,12 +1049,14 @@ class DeckyZoneService:
         self._startup_target_active = False
 
         if self._temporary_target_mode == MISSING_GLYPH_FIX_TARGET:
+            await self._sync_brightness_dial_fixer_state()
             await self._sync_home_button_navigation_state()
             return False
 
         try:
-            self._restart_inputplumber()
+            await self._sync_brightness_dial_fixer_state()
             await self._sync_home_button_navigation_state()
+            self._restart_inputplumber()
             self._set_status("disabled", DISABLED_MESSAGE)
             return True
         except subprocess.CalledProcessError as error:
@@ -1092,11 +1144,7 @@ class DeckyZoneService:
             return self._current_settings()
 
         self.settings_store.set_brightness_dial_fix_enabled(enabled)
-
-        if enabled:
-            await self.start_brightness_dial_fixer()
-        else:
-            await self.stop_brightness_dial_fixer()
+        await self._sync_brightness_dial_fixer_state()
 
         return self._current_settings()
 
@@ -1315,7 +1363,17 @@ class DeckyZoneService:
         self.log_privilege_context()
 
         try:
-            self._apply_target_devices(STARTUP_MODE)
+            self._set_status("waiting", "Waiting for InputPlumber target attachment.")
+            if not await self._apply_target_devices_with_retries(STARTUP_MODE):
+                self._startup_target_active = False
+                self._temporary_target_mode = None
+                await self._sync_brightness_dial_fixer_state()
+                await self._sync_home_button_navigation_state()
+                self._set_status(
+                    "failed",
+                    "Failed to apply startup mode: InputPlumber target devices did not settle after retries.",
+                )
+                return self.get_status()
         except subprocess.CalledProcessError as error:
             detail = (error.stderr or error.stdout or str(error)).strip()
             self._set_status("failed", f"Failed to apply startup mode: {detail}")
@@ -1326,6 +1384,7 @@ class DeckyZoneService:
 
         self._startup_applied_this_session = True
         self._startup_target_active = True
+        await self._sync_brightness_dial_fixer_state()
         await self._sync_home_button_navigation_state()
         self._set_status("applied", f"Startup mode re-applied: {STARTUP_MODE}.")
         return self.get_status()
@@ -1411,8 +1470,6 @@ class Plugin:
         self.loop = asyncio.get_event_loop()
         decky.logger.info("DeckyZone starting")
         settings = self.service.get_settings()
-        if settings["brightnessDialFixEnabled"]:
-            await self.service.start_brightness_dial_fixer()
         if settings["rumbleEnabled"]:
             await self.service.start_rumble_fixer()
         if settings["startupApplyEnabled"]:

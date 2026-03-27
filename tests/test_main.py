@@ -153,6 +153,10 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         service._get_ids = lambda: (1000, 1000)
         service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._wait_for_inputplumber_target_devices = (
+            lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
+        )
 
         status = await service.apply_startup_mode()
 
@@ -211,6 +215,101 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             "DeckyZone privilege context: uid=1000 euid=1000 elevated=False",
             info_messages,
         )
+
+    async def test_apply_target_devices_with_retries_retries_until_targets_settle(self):
+        apply_calls = []
+        sleeps = []
+
+        async def fake_sleep(duration):
+            sleeps.append(duration)
+
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=fake_sleep,
+            read_text=lambda path: "",
+        )
+        service._apply_target_devices = lambda mode, include_mouse=True: apply_calls.append(
+            (mode, include_mouse)
+        )
+        settle_results = iter([False, True])
+
+        async def wait_for_targets(expected_count, timeout=3.0, interval=0.25):
+            return next(settle_results)
+
+        service._wait_for_inputplumber_target_devices = wait_for_targets
+
+        result = await service._apply_target_devices_with_retries(main.STARTUP_MODE)
+
+        self.assertTrue(result)
+        self.assertEqual(
+            apply_calls,
+            [
+                (main.STARTUP_MODE, True),
+                (main.STARTUP_MODE, True),
+            ],
+        )
+        self.assertEqual(sleeps, [0.5])
+
+    async def test_apply_target_devices_with_retries_fails_after_retry_limit(self):
+        apply_calls = []
+        sleeps = []
+
+        async def fake_sleep(duration):
+            sleeps.append(duration)
+
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=fake_sleep,
+            read_text=lambda path: "",
+        )
+        service._apply_target_devices = lambda mode, include_mouse=True: apply_calls.append(
+            (mode, include_mouse)
+        )
+
+        async def wait_for_targets(expected_count, timeout=3.0, interval=0.25):
+            return False
+
+        service._wait_for_inputplumber_target_devices = wait_for_targets
+
+        result = await service._apply_target_devices_with_retries(main.STARTUP_MODE)
+
+        self.assertFalse(result)
+        self.assertEqual(
+            apply_calls,
+            [
+                (main.STARTUP_MODE, True),
+                (main.STARTUP_MODE, True),
+                (main.STARTUP_MODE, True),
+            ],
+        )
+        self.assertEqual(sleeps, [0.5, 0.5])
+
+    async def test_apply_startup_mode_fails_when_targets_never_settle_after_apply(self):
+        logger = _FakeLogger()
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            logger=logger,
+            read_text=lambda path: {"sys_vendor": "ZOTAC", "board_name": "G0A1W"}[
+                Path(path).name
+            ],
+        )
+        service.wait_for_inputplumber_dbus = lambda: asyncio.sleep(0, result=True)
+        service.log_privilege_context = _noop
+        service._apply_target_devices_with_retries = (
+            lambda target_mode, include_mouse=True: asyncio.sleep(0, result=False)
+        )
+
+        status = await service.apply_startup_mode()
+
+        self.assertEqual(
+            status,
+            {
+                "state": "failed",
+                "message": "Failed to apply startup mode: InputPlumber target devices did not settle after retries.",
+            },
+        )
+        self.assertFalse(service._startup_target_active)
 
     async def test_apply_startup_mode_fails_when_inputplumber_never_appears(self):
         commands = []
@@ -281,6 +380,10 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
         service._get_ids = lambda: (0, 0)
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._wait_for_inputplumber_target_devices = (
+            lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
+        )
 
         await service.apply_startup_mode()
         await service.apply_startup_mode()
@@ -547,6 +650,10 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             read_text=lambda path: "",
         )
         service._grab_zotac_mouse_device = lambda: grabbed.append("grab") or True
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._wait_for_inputplumber_target_devices = (
+            lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
+        )
         service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
@@ -577,6 +684,26 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("KeyF18", commands[4][-1])
         self.assertEqual(listener_calls, ["start"])
 
+    async def test_sync_missing_glyph_fix_target_uses_hardened_target_apply_helper(self):
+        applied = []
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._grab_zotac_mouse_device = lambda: True
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._apply_target_devices_with_retries = lambda mode, include_mouse=True: (
+            applied.append((mode, include_mouse)) or asyncio.sleep(0, result=True)
+        )
+        service._sync_home_button_navigation_state = lambda: asyncio.sleep(0, result=True)
+        main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
+
+        result = await service.sync_missing_glyph_fix_target("123")
+
+        self.assertTrue(result)
+        self.assertEqual(applied, [(main.MISSING_GLYPH_FIX_TARGET, True)])
+
     async def test_sync_missing_glyph_fix_target_does_not_start_home_button_listener_when_disabled(self):
         commands = []
         listener_calls = []
@@ -587,6 +714,10 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             read_text=lambda path: "",
         )
         service._grab_zotac_mouse_device = lambda: True
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._wait_for_inputplumber_target_devices = (
+            lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
+        )
         service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
         main.plugin_settings.set_home_button_enabled(False)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
@@ -623,6 +754,10 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         service._grab_zotac_mouse_device = lambda: True
         service._release_zotac_mouse_device = lambda: released.append("release") or True
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._wait_for_inputplumber_target_devices = (
+            lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
+        )
         main.plugin_settings.set_home_button_enabled(False)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
@@ -661,6 +796,10 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         )
         service._grab_zotac_mouse_device = lambda: True
         service._release_zotac_mouse_device = lambda: released.append("release") or True
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._wait_for_inputplumber_target_devices = (
+            lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
+        )
         main.plugin_settings.set_home_button_enabled(False)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
@@ -931,6 +1070,10 @@ mapping:
             sleep=_async_noop,
             read_text=lambda path: "",
         )
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._wait_for_inputplumber_target_devices = (
+            lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
+        )
         service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
         service.stop_home_button_listener = lambda: listener_calls.append("stop") or asyncio.sleep(0)
         main.plugin_settings.set_startup_apply_enabled(False)
@@ -949,6 +1092,10 @@ mapping:
             command_runner=lambda command, **kwargs: _CompletedProcess(returncode=0),
             sleep=_async_noop,
             read_text=lambda path: "",
+        )
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._wait_for_inputplumber_target_devices = (
+            lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
         )
         service._set_status("disabled", "Startup mode apply is disabled.")
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
@@ -989,6 +1136,10 @@ mapping:
 
         service.command_runner = runner
         service._grab_zotac_mouse_device = lambda: True
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._wait_for_inputplumber_target_devices = (
+            lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
+        )
         service._set_status("disabled", "Startup mode apply is disabled.")
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
@@ -1430,6 +1581,7 @@ mapping:
         )
         service._inputplumber_available = True
         service._rumble_available = False
+        service._startup_target_active = True
 
         async def start():
             calls.append("start")
@@ -1618,6 +1770,10 @@ mapping:
                 Path(path).name
             ],
         )
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
+        service._wait_for_inputplumber_target_devices = (
+            lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
+        )
 
         await service.apply_startup_mode()
         service.set_startup_apply_enabled(False)
@@ -1629,6 +1785,28 @@ mapping:
                 "message": "Startup mode apply is disabled. Reboot to restore unmodified InputPlumber startup behavior.",
             },
         )
+
+    async def test_apply_startup_mode_starts_brightness_listener_after_verified_success(self):
+        calls = []
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: {"sys_vendor": "ZOTAC", "board_name": "G0A1W"}[
+                Path(path).name
+            ],
+        )
+        main.plugin_settings.set_brightness_dial_fix_enabled(True)
+        service.wait_for_inputplumber_dbus = lambda: asyncio.sleep(0, result=True)
+        service.log_privilege_context = _noop
+        service._apply_target_devices_with_retries = (
+            lambda target_mode, include_mouse=True: asyncio.sleep(0, result=True)
+        )
+        service.start_brightness_dial_fixer = lambda: calls.append("brightness-start") or asyncio.sleep(0)
+        service._sync_home_button_navigation_state = lambda: calls.append("home-sync") or asyncio.sleep(0)
+
+        await service.apply_startup_mode()
+
+        self.assertEqual(calls, ["brightness-start", "home-sync"])
 
     async def test_disable_startup_target_runtime_restarts_inputplumber_when_active(self):
         commands = []
@@ -1650,6 +1828,23 @@ mapping:
         self.assertEqual(commands, [["systemctl", "restart", "inputplumber"]])
         self.assertEqual(listener_calls, ["stop"])
 
+    async def test_disable_startup_target_runtime_stops_brightness_listener_when_active(self):
+        calls = []
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._startup_target_active = True
+        service.stop_brightness_dial_fixer = lambda: calls.append("brightness-stop") or asyncio.sleep(0)
+        service.stop_home_button_listener = lambda: calls.append("home-stop") or asyncio.sleep(0)
+        service._restart_inputplumber = lambda: calls.append("restart")
+
+        result = await service.disable_startup_target_runtime()
+
+        self.assertTrue(result)
+        self.assertEqual(calls, ["brightness-stop", "home-stop", "restart"])
+
     async def test_disable_startup_target_runtime_does_not_restart_inputplumber_during_glyph_fix(self):
         commands = []
         service = main.DeckyZoneService(
@@ -1660,6 +1855,7 @@ mapping:
         )
         service._startup_target_active = True
         service._temporary_target_mode = main.MISSING_GLYPH_FIX_TARGET
+        service.start_brightness_dial_fixer = lambda: asyncio.sleep(0)
         main.plugin_settings.set_home_button_enabled(False)
 
         result = await service.disable_startup_target_runtime()
@@ -1841,7 +2037,7 @@ class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
 
         self.assertIsNotNone(plugin.startup_task)
-        self.assertEqual(calls, ["brightness-started", "rumble-started", "applied"])
+        self.assertEqual(calls, ["rumble-started", "applied"])
         await plugin._unload()
 
     async def test_main_skips_startup_apply_when_disabled(self):
@@ -1895,7 +2091,7 @@ class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.sleep(0)
 
         self.assertIsNone(plugin.startup_task)
-        self.assertEqual(calls, ["brightness-started", "rumble-started", ("set", False)])
+        self.assertEqual(calls, ["rumble-started", ("set", False)])
 
     async def test_main_skips_brightness_dial_listener_when_disabled(self):
         calls = []
