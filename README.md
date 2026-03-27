@@ -26,11 +26,19 @@ curl -L https://raw.githubusercontent.com/felixhirschfeld/DeckyZone/main/install
 
 ## Compatibility
 
-- Developed and Tested on the latest SteamOS `main`
-- Intended to work on distros with InputPlumber integrated, such as Nobara and CachyOS, but not tested yet
-- Bazzite/HHD compatibility is a target, but Bazzite will soon drop HHD so I focued on InputPlumber
+| Feature                             | SteamOS `main` | Bazzite |
+| ----------------------------------- | -------------- | ------- |
+| Enable Controller / Dials           | ✅             | ❌      |
+| Enable Home Button                  | ✅             | ❌      |
+| Enable Brightness Dial              | ✅             | ❌      |
+| Adjust rumble / vibration intensity | ✅             | ✅      |
+| Test Rumble                         | ✅             | ❌      |
+| Button Prompt Fix                   | ✅             | ❌      |
+| Disable Trackpads                   | ✅             | ❌      |
 
-## Status
+Other distros with InputPlumber integrated, such as Nobara and CachyOS, may work too, but are not tested yet. Bazzite will soon switch to InputPlumber.
+
+## Feedback
 
 Feedback is really appreciated. Please open an issue if you have feedback, bugs, or feature requests.
 
