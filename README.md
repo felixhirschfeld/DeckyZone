@@ -1,15 +1,14 @@
 # DeckyZone
 
-DeckyZone is a Decky plugin for the Zotac Gaming Zone that aims to bridge the most common compatibility gaps until full compatibility lands. It focuses on practical fixes and workarounds for the problems you are most likely to run into today.
+DeckyZone is a Decky plugin for the Zotac Gaming Zone that aims to bridge the most common compatibility gaps until full compatibility lands. I started with controller-related fixes first, because those were the first issues I ran into and I was especially hyped about getting the dials working.
 
 ## Current Features
 
-- Enable the controller behavior DeckyZone manages
 - Enable the Home button
 - Enable the dials, including brightness on the right dial
-- Improve rumble setup and testing
-- Fix button prompts and glyphs in games
-- Optionally disable trackpads while that fix is active
+- Adjust rumble / vibration intenstiy
+- Fix button prompts and glyphs in games (like Mafia 3, Mafia 1, Avengers)
+- Optionally disable trackpads while that fix is active (I tend to touch them with my palm 🤣)
 
 ## Installation
 
@@ -21,9 +20,9 @@ curl -L https://raw.githubusercontent.com/felixhirschfeld/DeckyZone/main/install
 
 ## Compatibility
 
-- Confirmed working on the latest SteamOS `main`
+- Developed and Tested on the latest SteamOS `main`
 - Intended to work on distros with InputPlumber integrated, such as Nobara and CachyOS, but not tested yet
-- Bazzite/HHD compatibility is a target, but not confirmed yet
+- Bazzite/HHD compatibility is a target, but Bazzite will soon drop HHD so I focued on InputPlumber
 
 ## Status
 
@@ -71,8 +70,8 @@ These are ideas, not promised features.
 
 Projects currently inspiring DeckyZone:
 
-- `Decky Loader`
-- `Decky Plugin Template`
 - `Legion Go Remapper`
 - `HueSync`
 - `PowerControl`
+- `DeckyPlumber`
+- `OpenZone`
