@@ -1,6 +1,6 @@
 {
   "name": "deckyzone",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Zotac Gaming Zone plugin for Decky Loader.",
   "type": "module",
   "scripts": {
