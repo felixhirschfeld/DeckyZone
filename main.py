@@ -729,11 +729,17 @@ class DeckyZoneService:
         if app_id in (None, "", DEFAULT_APP_ID):
             return self._current_settings()
 
+        if enabled and not self.probe_inputplumber_available():
+            return self._current_settings()
+
         self.settings_store.set_missing_glyph_fix_enabled(app_id, enabled)
         return self._current_settings()
 
     def set_missing_glyph_fix_trackpads_disabled(self, app_id, disabled):
         if app_id in (None, "", DEFAULT_APP_ID):
+            return self._current_settings()
+
+        if disabled and not self.probe_inputplumber_available():
             return self._current_settings()
 
         self.settings_store.set_missing_glyph_fix_trackpads_disabled(app_id, disabled)
@@ -972,6 +978,9 @@ class DeckyZoneService:
         return self._rumble_available
 
     def set_startup_apply_enabled(self, enabled):
+        if enabled and not self.probe_inputplumber_available():
+            return self._current_settings()
+
         enabled = self.settings_store.set_startup_apply_enabled(enabled)
 
         if enabled:
@@ -1007,6 +1016,9 @@ class DeckyZoneService:
             return False
 
     async def set_home_button_enabled(self, enabled):
+        if enabled and not self.probe_inputplumber_available():
+            return self._current_settings()
+
         self.settings_store.set_home_button_enabled(enabled)
         await self._sync_home_button_navigation_state()
         return self._current_settings()
@@ -1076,6 +1088,9 @@ class DeckyZoneService:
         return True
 
     async def set_brightness_dial_fix_enabled(self, enabled):
+        if enabled and not self.probe_inputplumber_available():
+            return self._current_settings()
+
         self.settings_store.set_brightness_dial_fix_enabled(enabled)
 
         if enabled:

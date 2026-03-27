@@ -453,6 +453,35 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         error_messages = [args[0] for level, args, _ in logger.messages if level == "error"]
         self.assertIn("Failed to update DeckyZone: download failed", error_messages)
 
+    async def test_inputplumber_dependent_setters_leave_settings_unchanged_when_inputplumber_is_unavailable(self):
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+        )
+        service._inputplumber_available = False
+        service.probe_inputplumber_available = lambda: False
+
+        main.plugin_settings.set_startup_apply_enabled(False)
+        main.plugin_settings.set_home_button_enabled(False)
+        main.plugin_settings.set_brightness_dial_fix_enabled(False)
+        main.plugin_settings.set_missing_glyph_fix_enabled("123", False)
+        main.plugin_settings.set_missing_glyph_fix_trackpads_disabled("123", False)
+
+        startup_settings = service.set_startup_apply_enabled(True)
+        home_settings = await service.set_home_button_enabled(True)
+        brightness_settings = await service.set_brightness_dial_fix_enabled(True)
+        glyph_settings = service.set_missing_glyph_fix_enabled("123", True)
+        trackpad_settings = service.set_missing_glyph_fix_trackpads_disabled("123", True)
+
+        self.assertFalse(startup_settings["startupApplyEnabled"])
+        self.assertFalse(home_settings["homeButtonEnabled"])
+        self.assertFalse(brightness_settings["brightnessDialFixEnabled"])
+        self.assertNotIn("123", glyph_settings["missingGlyphFixGames"])
+        self.assertNotIn("123", trackpad_settings["missingGlyphFixGames"])
+        self.assertFalse(main.plugin_settings.get_missing_glyph_fix_enabled("123"))
+        self.assertFalse(main.plugin_settings.get_missing_glyph_fix_trackpads_disabled("123"))
+
     async def test_set_rumble_enabled_starts_and_stops_background_loop(self):
         calls = []
         service = main.DeckyZoneService(
@@ -2125,7 +2154,7 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn("'brightness_dial_input'", source)
         self.assertIn('Disable Trackpads', source)
         self.assertIn("isTrackpadsDisabled", source)
-        self.assertIn("isMissingGlyphFixEnabled &&", source)
+        self.assertIn("const isMissingGlyphFixActive = settings.inputplumberAvailable && isMissingGlyphFixEnabled", source)
         self.assertIn("GetCachedAppDetails", source)
         self.assertIn("RegisterForAppDetails", source)
         self.assertIn("Steam Input disabled", source)
@@ -2153,21 +2182,36 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn("rumbleIntensitySaveTimeout", source)
         self.assertIn("value={rumbleIntensityDraft}", source)
         self.assertIn("setTimeout(() => {", source)
-        self.assertIn("disabled={savingStartup}", source)
+        self.assertIn("const inputplumberDependentControlDisabled = !settings.inputplumberAvailable", source)
+        self.assertIn("disabled={savingStartup || !settings.inputplumberAvailable}", source)
         self.assertIn("const controllerDependentToggleDisabled = !settings.startupApplyEnabled", source)
-        self.assertIn("disabled={savingHomeButton || !settings.startupApplyEnabled}", source)
-        self.assertIn("disabled={savingBrightnessDialFix || !settings.startupApplyEnabled}", source)
         self.assertIn(
-            "description={controllerDependentToggleDisabled ? HOME_BUTTON_TOGGLE_DISABLED_DESCRIPTION : HOME_BUTTON_TOGGLE_DESCRIPTION}",
+            "disabled={savingHomeButton || !settings.startupApplyEnabled || !settings.inputplumberAvailable}",
+            source,
+        )
+        self.assertIn(
+            "disabled={savingBrightnessDialFix || !settings.startupApplyEnabled || !settings.inputplumberAvailable}",
+            source,
+        )
+        self.assertIn("InputPlumber is not available.", source)
+        self.assertIn(
+            "inputplumberDependentControlDisabled",
+            source,
+        )
+        self.assertIn(
+            "inputplumberDependentControlDisabled\n                ? 'InputPlumber is not available.'",
             source,
         )
         self.assertIn("disabled={savingRumble}", source)
+        self.assertIn(
+            "disabled={savingRumble || testingRumble || !settings.rumbleEnabled || !settings.rumbleAvailable || !settings.inputplumberAvailable}",
+            source,
+        )
         self.assertIn("!settings.rumbleEnabled", source)
         self.assertIn("!settings.rumbleAvailable", source)
         self.assertNotIn("savingIntensity", source)
         self.assertNotIn("value={settings.rumbleIntensity}", source)
         self.assertNotIn("const [settings, setSettings] = useState<PluginSettings>({", source)
-        self.assertNotIn("disabled={savingStartup || !settings.inputplumberAvailable}", source)
         self.assertNotIn("disabled={savingRumble || !settings.rumbleAvailable}", source)
         self.assertNotIn("const activeGamePollInterval = window.setInterval(", source)
         self.assertNotIn("clearInterval(activeGamePollInterval)", source)

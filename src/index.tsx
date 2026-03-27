@@ -816,6 +816,8 @@ function Content() {
   const shouldShowSteamInputDisabledWarning =
     steamInputDiagnostic.state === 'ready' && getSteamInputDiagnosticStatus(steamInputDiagnostic.details) === 'Steam Input disabled'
   const controllerDependentToggleDisabled = !settings.startupApplyEnabled
+  const inputplumberDependentControlDisabled = !settings.inputplumberAvailable
+  const isMissingGlyphFixActive = settings.inputplumberAvailable && isMissingGlyphFixEnabled
 
   return (
     <>
@@ -825,7 +827,7 @@ function Content() {
             label="Enable Controller"
             checked={settings.startupApplyEnabled}
             onChange={(value: boolean) => void handleStartupToggleChange(value)}
-            disabled={savingStartup}
+            disabled={savingStartup || !settings.inputplumberAvailable}
             description={getStartupDescription(status, settings)}
           />
         </PanelSectionRow>
@@ -834,8 +836,14 @@ function Content() {
             label="Enable Home Button"
             checked={settings.homeButtonEnabled}
             onChange={(value: boolean) => void handleHomeButtonToggleChange(value)}
-            disabled={savingHomeButton || !settings.startupApplyEnabled}
-            description={controllerDependentToggleDisabled ? HOME_BUTTON_TOGGLE_DISABLED_DESCRIPTION : HOME_BUTTON_TOGGLE_DESCRIPTION}
+            disabled={savingHomeButton || !settings.startupApplyEnabled || !settings.inputplumberAvailable}
+            description={
+              inputplumberDependentControlDisabled
+                ? 'InputPlumber is not available.'
+                : controllerDependentToggleDisabled
+                  ? HOME_BUTTON_TOGGLE_DISABLED_DESCRIPTION
+                  : HOME_BUTTON_TOGGLE_DESCRIPTION
+            }
           />
         </PanelSectionRow>
         <PanelSectionRow>
@@ -843,7 +851,7 @@ function Content() {
             label="Enable Brightness Dial"
             checked={settings.brightnessDialFixEnabled}
             onChange={(value: boolean) => void handleBrightnessDialFixToggleChange(value)}
-            disabled={savingBrightnessDialFix || !settings.startupApplyEnabled}
+            disabled={savingBrightnessDialFix || !settings.startupApplyEnabled || !settings.inputplumberAvailable}
             description={getBrightnessDialFixDescription(settings)}
           />
         </PanelSectionRow>
@@ -873,7 +881,7 @@ function Content() {
               <ButtonItem
                 layout="below"
                 onClick={() => void handleTestRumble()}
-                disabled={savingRumble || testingRumble || !settings.rumbleEnabled || !settings.rumbleAvailable}
+                disabled={savingRumble || testingRumble || !settings.rumbleEnabled || !settings.rumbleAvailable || !settings.inputplumberAvailable}
               >
                 {testingRumble ? 'Testing Rumble...' : `Test  ${rumbleIntensityDraft}% Rumble`}
               </ButtonItem>
@@ -896,16 +904,16 @@ function Content() {
             label="Button Prompt Fix"
             checked={isMissingGlyphFixEnabled}
             onChange={(value: boolean) => void handleMissingGlyphFixToggleChange(value)}
-            disabled={!activeGame || savingMissingGlyphFix}
-            description={getMissingGlyphFixDescription(activeGame)}
+            disabled={!activeGame || savingMissingGlyphFix || !settings.inputplumberAvailable}
+            description={settings.inputplumberAvailable ? getMissingGlyphFixDescription(activeGame) : 'InputPlumber is not available.'}
           />
         </PanelSectionRow>
-        {activeGame && isMissingGlyphFixEnabled && shouldShowSteamInputDisabledWarning && (
+        {activeGame && isMissingGlyphFixActive && shouldShowSteamInputDisabledWarning && (
           <PanelSectionRow>
             <div className={gamepadDialogClasses.FieldDescription}>Steam Input disabled</div>
           </PanelSectionRow>
         )}
-        {activeGame && isMissingGlyphFixEnabled && (
+        {activeGame && isMissingGlyphFixActive && (
           <PanelSectionRow>
             <ToggleField
               label="Disable Trackpads"
