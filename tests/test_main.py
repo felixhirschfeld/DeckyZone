@@ -1808,6 +1808,40 @@ mapping:
 
         self.assertEqual(calls, ["brightness-start", "home-sync"])
 
+    async def test_apply_startup_mode_clears_stale_temporary_target_before_glyph_fix_sync(self):
+        applied = []
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: {"sys_vendor": "ZOTAC", "board_name": "G0A1W"}[
+                Path(path).name
+            ],
+        )
+        service.wait_for_inputplumber_dbus = lambda: asyncio.sleep(0, result=True)
+        service.wait_for_inputplumber_dbus_silently = lambda: asyncio.sleep(0, result=True)
+        service.log_privilege_context = _noop
+        service._apply_target_devices_with_retries = lambda target_mode, include_mouse=True: (
+            applied.append((target_mode, include_mouse)) or asyncio.sleep(0, result=True)
+        )
+        service._sync_brightness_dial_fixer_state = lambda: asyncio.sleep(0, result=True)
+        service._sync_home_button_navigation_state = lambda: asyncio.sleep(0, result=True)
+        service._grab_zotac_mouse_device = lambda: True
+        service._temporary_target_mode = main.MISSING_GLYPH_FIX_TARGET
+        main.plugin_settings.set_startup_apply_enabled(True)
+        main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
+
+        await service.apply_startup_mode()
+        result = await service.sync_missing_glyph_fix_target("123")
+
+        self.assertTrue(result)
+        self.assertEqual(
+            applied,
+            [
+                (main.STARTUP_MODE, True),
+                (main.MISSING_GLYPH_FIX_TARGET, True),
+            ],
+        )
+
     async def test_disable_startup_target_runtime_restarts_inputplumber_when_active(self):
         commands = []
         listener_calls = []

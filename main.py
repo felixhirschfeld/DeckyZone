@@ -1384,6 +1384,8 @@ class DeckyZoneService:
 
         self._startup_applied_this_session = True
         self._startup_target_active = True
+        self._temporary_target_mode = None
+        self._release_zotac_mouse_device()
         await self._sync_brightness_dial_fixer_state()
         await self._sync_home_button_navigation_state()
         self._set_status("applied", f"Startup mode re-applied: {STARTUP_MODE}.")
