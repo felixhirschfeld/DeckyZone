@@ -6,6 +6,6 @@
   "publish": {
     "tags": ["zotac", "inputplumber", "root"],
     "description": "Zotac Gaming Zone plugin for Decky Loader.",
-    "image": "https://opengraph.githubassets.com/1/felixhirschfeld/DeckyZone"
+    "image": "https://opengraph.githubassets.com/1/DeckFilter/DeckyZone"
   }
 }

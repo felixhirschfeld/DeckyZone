@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/felixhirschfeld/DeckyZone.git"
+    "url": "git+https://github.com/DeckFilter/DeckyZone.git"
   },
   "keywords": [
     "decky",
@@ -22,9 +22,9 @@
   "author": "Felix Hirschfeld",
   "license": "BSD-3-Clause",
   "bugs": {
-    "url": "https://github.com/felixhirschfeld/DeckyZone/issues"
+    "url": "https://github.com/DeckFilter/DeckyZone/issues"
   },
-  "homepage": "https://github.com/felixhirschfeld/DeckyZone#readme",
+  "homepage": "https://github.com/DeckFilter/DeckyZone#readme",
   "devDependencies": {
     "@decky/rollup": "^1.0.2",
     "@decky/ui": "^4.11.0",

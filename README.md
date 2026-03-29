@@ -1,8 +1,8 @@
 # DeckyZone
 
-[![](https://img.shields.io/github/downloads/felixhirschfeld/DeckyZone/total.svg)](https://github.com/felixhirschfeld/DeckyZone/releases)
-[![](https://img.shields.io/github/downloads/felixhirschfeld/DeckyZone/latest/total)](https://github.com/felixhirschfeld/DeckyZone/releases/latest)
-[![](https://img.shields.io/github/v/release/felixhirschfeld/DeckyZone)](https://github.com/felixhirschfeld/DeckyZone/releases/latest)
+[![](https://img.shields.io/github/downloads/DeckFilter/DeckyZone/total.svg)](https://github.com/DeckFilter/DeckyZone/releases)
+[![](https://img.shields.io/github/downloads/DeckFilter/DeckyZone/latest/total)](https://github.com/DeckFilter/DeckyZone/releases/latest)
+[![](https://img.shields.io/github/v/release/DeckFilter/DeckyZone)](https://github.com/DeckFilter/DeckyZone/releases/latest)
 
 DeckyZone is a Decky plugin for the Zotac Gaming Zone that aims to bridge the most common compatibility gaps until full compatibility lands. I started with controller-related fixes first, because those were the first issues I ran into and I was especially hyped about getting the dials working.
 

@@ -11,7 +11,7 @@ import decky
 
 
 PACKAGE_NAME = "DeckyZone"
-RELEASE_API_URL = "https://api.github.com/repos/felixhirschfeld/DeckyZone/releases/latest"
+RELEASE_API_URL = "https://api.github.com/repos/DeckFilter/DeckyZone/releases/latest"
 TARBALL_ASSET_NAME = f"{PACKAGE_NAME}.tar.gz"
 
 

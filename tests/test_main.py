@@ -2292,6 +2292,12 @@ mapping:
 
 
 class PluginUpdateHelperTests(unittest.TestCase):
+    def test_release_api_url_uses_current_repository(self):
+        self.assertEqual(
+            plugin_update.RELEASE_API_URL,
+            "https://api.github.com/repos/DeckFilter/DeckyZone/releases/latest",
+        )
+
     def test_get_tarball_download_url_selects_deckyzone_tarball(self):
         release_metadata = {
             "assets": [
