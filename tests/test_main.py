@@ -40,13 +40,22 @@ _VALID_ZOTAC_SYSTEM_PROFILE = """gamescope.config.known_displays.zotac_amoled = 
 """
 
 _DECKYZONE_BASE_PROFILE = """gamescope.config.known_displays.zotac_amoled = {
-    pretty_name = "DXQ7D0023 AMOLED",
+    colorimetry = {
+        w = {
+            x = 0.3095,
+            y = 0.3095,
+        },
+    },
 }
 """
 
-_DECKYZONE_GREEN_TINT_PROFILE = """gamescope.config.known_displays.zotac_amoled.colorimetry.w = {
-    x = 0.3070,
-    y = 0.3235,
+_DECKYZONE_GREEN_TINT_PROFILE = """gamescope.config.known_displays.zotac_amoled = {
+    colorimetry = {
+        w = {
+            x = 0.3070,
+            y = 0.3235,
+        },
+    },
 }
 """
 
@@ -448,6 +457,8 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
+                "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": True,
                 "pluginVersionNum": "0.0.1-test",
                 "rumbleEnabled": True,
@@ -477,6 +488,8 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
+                "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": False,
                 "pluginVersionNum": "0.0.1-test",
                 "rumbleEnabled": True,
@@ -657,6 +670,8 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
+                "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": True,
                 "pluginVersionNum": "0.0.1-test",
                 "rumbleEnabled": False,
@@ -676,6 +691,8 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
+                "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": True,
                 "pluginVersionNum": "0.0.1-test",
                 "rumbleEnabled": True,
@@ -908,6 +925,8 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
+                "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": True,
                 "pluginVersionNum": "0.0.1-test",
                 "rumbleEnabled": True,
@@ -1616,6 +1635,8 @@ mapping:
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
+                "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": True,
                 "pluginVersionNum": "0.0.1-test",
                 "rumbleEnabled": True,
@@ -1686,6 +1707,11 @@ mapping:
             self.assertTrue(settings["gamescopeZotacProfileBuiltIn"])
             self.assertFalse(settings["gamescopeZotacProfileInstalled"])
             self.assertFalse(settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(
+                settings["gamescopeZotacProfileTargetPath"],
+                str(Path(temp_home) / ".config" / "gamescope" / "scripts" / "zotac.zone.oled.lua"),
+            )
+            self.assertEqual(settings["gamescopeZotacProfileVerificationState"], "absent")
 
     async def test_set_gamescope_zotac_profile_enabled_installs_and_removes_managed_base_profile(self):
         with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_plugin_dir:
@@ -1707,9 +1733,7 @@ mapping:
                 / ".config"
                 / "gamescope"
                 / "scripts"
-                / "90-deckyzone"
-                / "displays"
-                / "10-zotac-zone-oled.lua"
+                / "zotac.zone.oled.lua"
             )
 
             enabled_settings = await service.set_gamescope_zotac_profile_enabled(True)
@@ -1722,11 +1746,13 @@ mapping:
             self.assertFalse(enabled_settings["gamescopeZotacProfileBuiltIn"])
             self.assertTrue(enabled_settings["gamescopeZotacProfileInstalled"])
             self.assertFalse(enabled_settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(enabled_settings["gamescopeZotacProfileVerificationState"], "base")
 
             disabled_settings = await service.set_gamescope_zotac_profile_enabled(False)
 
             self.assertFalse(managed_base_path.exists())
             self.assertFalse(disabled_settings["gamescopeZotacProfileInstalled"])
+            self.assertEqual(disabled_settings["gamescopeZotacProfileVerificationState"], "absent")
 
     async def test_set_gamescope_green_tint_fix_enabled_rejects_when_base_profile_is_unavailable(self):
         with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_plugin_dir:
@@ -1748,9 +1774,7 @@ mapping:
                 / ".config"
                 / "gamescope"
                 / "scripts"
-                / "90-deckyzone"
-                / "displays"
-                / "20-zotac-zone-green-tint.lua"
+                / "zotac.zone.oled.lua"
             )
 
             settings = await service.set_gamescope_green_tint_fix_enabled(True)
@@ -1759,8 +1783,9 @@ mapping:
             self.assertFalse(settings["gamescopeZotacProfileBuiltIn"])
             self.assertFalse(settings["gamescopeZotacProfileInstalled"])
             self.assertFalse(settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(settings["gamescopeZotacProfileVerificationState"], "absent")
 
-    async def test_set_gamescope_green_tint_fix_enabled_writes_only_override_when_builtin_profile_exists(self):
+    async def test_set_gamescope_green_tint_fix_enabled_writes_corrected_full_profile_when_builtin_profile_exists(self):
         with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_plugin_dir, tempfile.TemporaryDirectory() as temp_root:
             _write_gamescope_display_assets(Path(temp_plugin_dir))
             system_profile_path = (
@@ -1792,25 +1817,29 @@ mapping:
                 / ".config"
                 / "gamescope"
                 / "scripts"
-                / "90-deckyzone"
-                / "displays"
-                / "10-zotac-zone-oled.lua"
+                / "zotac.zone.oled.lua"
             )
-            managed_green_path = managed_base_path.with_name("20-zotac-zone-green-tint.lua")
 
             settings = await service.set_gamescope_green_tint_fix_enabled(True)
 
-            self.assertFalse(managed_base_path.exists())
-            self.assertTrue(managed_green_path.exists())
+            self.assertTrue(managed_base_path.exists())
             self.assertEqual(
-                managed_green_path.read_text(encoding="utf-8"),
+                managed_base_path.read_text(encoding="utf-8"),
                 _DECKYZONE_GREEN_TINT_PROFILE,
             )
             self.assertTrue(settings["gamescopeZotacProfileBuiltIn"])
-            self.assertFalse(settings["gamescopeZotacProfileInstalled"])
+            self.assertTrue(settings["gamescopeZotacProfileInstalled"])
             self.assertTrue(settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(settings["gamescopeZotacProfileVerificationState"], "green")
 
-    async def test_disabling_managed_gamescope_zotac_profile_also_removes_green_tint_override(self):
+            disabled_settings = await service.set_gamescope_green_tint_fix_enabled(False)
+
+            self.assertFalse(managed_base_path.exists())
+            self.assertFalse(disabled_settings["gamescopeZotacProfileInstalled"])
+            self.assertFalse(disabled_settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(disabled_settings["gamescopeZotacProfileVerificationState"], "absent")
+
+    async def test_set_gamescope_green_tint_fix_enabled_rewrites_same_file_between_variants(self):
         with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_plugin_dir:
             _write_gamescope_display_assets(Path(temp_plugin_dir))
             helper = main.gamescope_display_profiles.GamescopeDisplayProfiles(
@@ -1830,18 +1859,132 @@ mapping:
                 / ".config"
                 / "gamescope"
                 / "scripts"
-                / "90-deckyzone"
-                / "displays"
             )
-            managed_base_path = managed_dir / "10-zotac-zone-oled.lua"
-            managed_green_path = managed_dir / "20-zotac-zone-green-tint.lua"
+            managed_base_path = managed_dir / "zotac.zone.oled.lua"
+
+            await service.set_gamescope_zotac_profile_enabled(True)
+            green_settings = await service.set_gamescope_green_tint_fix_enabled(True)
+
+            self.assertTrue(managed_base_path.exists())
+            self.assertEqual(managed_base_path.read_text(encoding="utf-8"), _DECKYZONE_GREEN_TINT_PROFILE)
+            self.assertTrue(green_settings["gamescopeZotacProfileInstalled"])
+            self.assertTrue(green_settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(green_settings["gamescopeZotacProfileVerificationState"], "green")
+
+            base_settings = await service.set_gamescope_green_tint_fix_enabled(False)
+
+            self.assertTrue(managed_base_path.exists())
+            self.assertEqual(managed_base_path.read_text(encoding="utf-8"), _DECKYZONE_BASE_PROFILE)
+            self.assertTrue(base_settings["gamescopeZotacProfileInstalled"])
+            self.assertFalse(base_settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(base_settings["gamescopeZotacProfileVerificationState"], "base")
+
+    async def test_disabling_managed_gamescope_zotac_profile_removes_single_managed_file_and_clears_green_state(self):
+        with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_plugin_dir:
+            _write_gamescope_display_assets(Path(temp_plugin_dir))
+            helper = main.gamescope_display_profiles.GamescopeDisplayProfiles(
+                user_home=temp_home,
+                plugin_dir=temp_plugin_dir,
+                system_profile_paths=[],
+            )
+            service = main.DeckyZoneService(
+                command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+                sleep=_async_noop,
+                read_text=lambda path: "",
+                gamescope_display_profiles=helper,
+            )
+
+            managed_base_path = (
+                Path(temp_home)
+                / ".config"
+                / "gamescope"
+                / "scripts"
+                / "zotac.zone.oled.lua"
+            )
 
             await service.set_gamescope_zotac_profile_enabled(True)
             await service.set_gamescope_green_tint_fix_enabled(True)
-            await service.set_gamescope_zotac_profile_enabled(False)
+            disabled_settings = await service.set_gamescope_zotac_profile_enabled(False)
 
             self.assertFalse(managed_base_path.exists())
-            self.assertFalse(managed_green_path.exists())
+            self.assertFalse(disabled_settings["gamescopeZotacProfileInstalled"])
+            self.assertFalse(disabled_settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(disabled_settings["gamescopeZotacProfileVerificationState"], "absent")
+
+    async def test_get_settings_reports_unexpected_managed_profile_content(self):
+        with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_plugin_dir:
+            _write_gamescope_display_assets(Path(temp_plugin_dir))
+            managed_base_path = (
+                Path(temp_home)
+                / ".config"
+                / "gamescope"
+                / "scripts"
+                / "zotac.zone.oled.lua"
+            )
+            managed_base_path.parent.mkdir(parents=True, exist_ok=True)
+            managed_base_path.write_text("-- unexpected", encoding="utf-8")
+
+            helper = main.gamescope_display_profiles.GamescopeDisplayProfiles(
+                user_home=temp_home,
+                plugin_dir=temp_plugin_dir,
+                system_profile_paths=[],
+            )
+            service = main.DeckyZoneService(
+                command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+                sleep=_async_noop,
+                read_text=lambda path: "",
+                gamescope_display_profiles=helper,
+            )
+
+            settings = service.get_settings()
+
+            self.assertTrue(settings["gamescopeZotacProfileInstalled"])
+            self.assertFalse(settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(settings["gamescopeZotacProfileVerificationState"], "unexpected")
+
+    async def test_get_settings_migrates_legacy_deckyzone_paths_to_single_managed_file(self):
+        with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_plugin_dir:
+            _write_gamescope_display_assets(Path(temp_plugin_dir))
+            legacy_green_path = (
+                Path(temp_home)
+                / ".config"
+                / "gamescope"
+                / "scripts"
+                / "90-deckyzone"
+                / "displays"
+                / "20-zotac-zone-green-tint.lua"
+            )
+            legacy_green_path.parent.mkdir(parents=True, exist_ok=True)
+            legacy_green_path.write_text(_DECKYZONE_GREEN_TINT_PROFILE, encoding="utf-8")
+
+            helper = main.gamescope_display_profiles.GamescopeDisplayProfiles(
+                user_home=temp_home,
+                plugin_dir=temp_plugin_dir,
+                system_profile_paths=[],
+            )
+            service = main.DeckyZoneService(
+                command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+                sleep=_async_noop,
+                read_text=lambda path: "",
+                gamescope_display_profiles=helper,
+            )
+
+            settings = service.get_settings()
+            managed_base_path = (
+                Path(temp_home)
+                / ".config"
+                / "gamescope"
+                / "scripts"
+                / "zotac.zone.oled.lua"
+            )
+
+            self.assertTrue(managed_base_path.exists())
+            self.assertEqual(managed_base_path.read_text(encoding="utf-8"), _DECKYZONE_GREEN_TINT_PROFILE)
+            self.assertFalse(legacy_green_path.exists())
+            self.assertFalse(legacy_green_path.parent.exists())
+            self.assertTrue(settings["gamescopeZotacProfileInstalled"])
+            self.assertTrue(settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(settings["gamescopeZotacProfileVerificationState"], "green")
 
     async def test_handle_brightness_dial_input_event_emits_up(self):
         emitted = []
@@ -1977,6 +2120,8 @@ mapping:
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
+                "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": True,
                 "pluginVersionNum": "0.0.1-test",
                 "rumbleEnabled": True,
@@ -2802,21 +2947,16 @@ class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
             custom_script_path.parent.mkdir(parents=True, exist_ok=True)
             custom_script_path.write_text("-- custom", encoding="utf-8")
 
-            managed_dir = (
-                Path(temp_home)
-                / ".config"
-                / "gamescope"
-                / "scripts"
-                / "90-deckyzone"
-                / "displays"
-            )
+            managed_dir = Path(temp_home) / ".config" / "gamescope" / "scripts"
+            managed_profile_path = managed_dir / "zotac.zone.oled.lua"
 
             await service.set_gamescope_zotac_profile_enabled(True)
             await service.set_gamescope_green_tint_fix_enabled(True)
             await plugin._uninstall()
 
             self.assertTrue(custom_script_path.exists())
-            self.assertFalse(managed_dir.exists())
+            self.assertTrue(managed_dir.exists())
+            self.assertFalse(managed_profile_path.exists())
 
 
 class FrontendSourceTests(unittest.TestCase):
@@ -3035,6 +3175,8 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn('gamescopeZotacProfileBuiltIn', component_source)
         self.assertIn('gamescopeZotacProfileInstalled', component_source)
         self.assertIn('gamescopeGreenTintFixEnabled', component_source)
+        self.assertIn('gamescopeZotacProfileTargetPath', component_source)
+        self.assertIn('gamescopeZotacProfileVerificationState', component_source)
         self.assertIn('set_gamescope_zotac_profile_enabled', component_source)
         self.assertIn('set_gamescope_green_tint_fix_enabled', component_source)
         self.assertIn('const isBaseProfileAvailable = settings.gamescopeZotacProfileBuiltIn || settings.gamescopeZotacProfileInstalled', component_source)
@@ -3042,15 +3184,16 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertNotIn("type MissingGlyphFixGameSettings = {", component_source)
         self.assertNotIn("type PluginSettings = {", component_source)
         self.assertIn('Restart Gamescope or reboot', component_source)
+        self.assertIn('Managed file:', component_source)
         self.assertIn('Use Native Color Temperature', component_source)
         self.assertIn('Settings -> Display -> Use Native Color Temperature', component_source)
         self.assertIn("export type PluginStatus = {", plugin_types_source)
         self.assertIn("export type MissingGlyphFixGameSettings = {", plugin_types_source)
         self.assertIn("export type PluginSettings = {", plugin_types_source)
         self.assertIn('class GamescopeDisplayProfiles', helper_source)
-        self.assertIn('90-deckyzone', helper_source)
-        self.assertIn('10-zotac-zone-oled.lua', helper_source)
-        self.assertIn('20-zotac-zone-green-tint.lua', helper_source)
+        self.assertIn('zotac.zone.oled.lua', helper_source)
+        self.assertIn('gamescopeZotacProfileTargetPath', plugin_types_source)
+        self.assertIn('gamescopeZotacProfileVerificationState', plugin_types_source)
         self.assertTrue(repo_root.joinpath("assets", "gamescope", "zotac.zone.oled.lua").exists())
         self.assertTrue(repo_root.joinpath("assets", "gamescope", "zotac.zone.green-tint.lua").exists())
 

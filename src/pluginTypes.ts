@@ -14,6 +14,8 @@ export type PluginSettings = {
   gamescopeZotacProfileBuiltIn: boolean
   gamescopeZotacProfileInstalled: boolean
   gamescopeGreenTintFixEnabled: boolean
+  gamescopeZotacProfileTargetPath: string
+  gamescopeZotacProfileVerificationState: string
   inputplumberAvailable: boolean
   pluginVersionNum?: string
   rumbleEnabled: boolean

@@ -196,6 +196,8 @@ class DeckyZoneService:
             "gamescopeZotacProfileBuiltIn": display_profile_settings["gamescopeZotacProfileBuiltIn"],
             "gamescopeZotacProfileInstalled": display_profile_settings["gamescopeZotacProfileInstalled"],
             "gamescopeGreenTintFixEnabled": display_profile_settings["gamescopeGreenTintFixEnabled"],
+            "gamescopeZotacProfileTargetPath": display_profile_settings["gamescopeZotacProfileTargetPath"],
+            "gamescopeZotacProfileVerificationState": display_profile_settings["gamescopeZotacProfileVerificationState"],
             "inputplumberAvailable": self._inputplumber_available,
             "pluginVersionNum": decky.DECKY_PLUGIN_VERSION,
             "rumbleEnabled": self.settings_store.get_rumble_enabled(),

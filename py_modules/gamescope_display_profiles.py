@@ -7,6 +7,10 @@ DEFAULT_SYSTEM_PROFILE_PATHS = (
 )
 ZOTAC_PROFILE_KEY = "gamescope.config.known_displays.zotac_amoled"
 ZOTAC_PROFILE_IDENTIFIERS = ("DXQ7D0023", "ZDZ0501")
+PROFILE_VARIANT_ABSENT = "absent"
+PROFILE_VARIANT_BASE = "base"
+PROFILE_VARIANT_GREEN = "green"
+PROFILE_VARIANT_UNEXPECTED = "unexpected"
 
 
 class GamescopeDisplayProfiles:
@@ -24,21 +28,35 @@ class GamescopeDisplayProfiles:
 
     @property
     def managed_scripts_dir(self):
-        return self.user_home / ".config" / "gamescope" / "scripts" / "90-deckyzone" / "displays"
+        return self.user_home / ".config" / "gamescope" / "scripts"
 
     @property
-    def managed_base_profile_path(self):
-        return self.managed_scripts_dir / "10-zotac-zone-oled.lua"
+    def managed_profile_path(self):
+        return self.managed_scripts_dir / "zotac.zone.oled.lua"
 
     @property
-    def managed_green_tint_profile_path(self):
-        return self.managed_scripts_dir / "20-zotac-zone-green-tint.lua"
+    def legacy_managed_scripts_dir(self):
+        return self.managed_scripts_dir / "90-deckyzone" / "displays"
+
+    @property
+    def legacy_managed_base_profile_path(self):
+        return self.legacy_managed_scripts_dir / "10-zotac-zone-oled.lua"
+
+    @property
+    def legacy_managed_green_tint_profile_path(self):
+        return self.legacy_managed_scripts_dir / "20-zotac-zone-green-tint.lua"
 
     def _read_file(self, path):
         return Path(path).read_text(encoding="utf-8")
 
     def _read_asset(self, filename):
         return self._read_file(self.assets_dir / filename)
+
+    def _expected_base_profile_text(self):
+        return self._read_asset("zotac.zone.oled.lua")
+
+    def _expected_green_profile_text(self):
+        return self._read_asset("zotac.zone.green-tint.lua")
 
     def _is_valid_zotac_profile(self, text):
         return ZOTAC_PROFILE_KEY in text and any(
@@ -60,35 +78,26 @@ class GamescopeDisplayProfiles:
 
         return None
 
-    def is_builtin_profile_available(self):
-        return self._resolve_builtin_profile_path() is not None
-
-    def is_managed_base_profile_installed(self):
-        return self.managed_base_profile_path.is_file()
-
-    def is_green_tint_fix_enabled(self):
-        return self.managed_green_tint_profile_path.is_file()
-
-    def is_base_profile_available(self):
-        return self.is_builtin_profile_available() or self.is_managed_base_profile_installed()
-
-    def get_state(self):
-        return {
-            "gamescopeZotacProfileBuiltIn": self.is_builtin_profile_available(),
-            "gamescopeZotacProfileInstalled": self.is_managed_base_profile_installed(),
-            "gamescopeGreenTintFixEnabled": self.is_green_tint_fix_enabled(),
-        }
-
     def _write_managed_profile(self, path, contents):
-        self.managed_scripts_dir.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(contents, encoding="utf-8")
 
     def _remove_managed_profile(self, path):
         if path.exists():
             path.unlink()
 
+    def _remove_legacy_managed_profiles(self):
+        self._remove_managed_profile(self.legacy_managed_green_tint_profile_path)
+        self._remove_managed_profile(self.legacy_managed_base_profile_path)
+
     def _cleanup_empty_directories(self):
-        for path in (self.managed_scripts_dir, self.managed_scripts_dir.parent):
+        cleanup_paths = (
+            self.legacy_managed_scripts_dir,
+            self.legacy_managed_scripts_dir.parent,
+            self.managed_scripts_dir,
+            self.managed_scripts_dir.parent,
+        )
+        for path in cleanup_paths:
             if not path.exists():
                 continue
             try:
@@ -96,37 +105,112 @@ class GamescopeDisplayProfiles:
             except OSError:
                 pass
 
+    def _migrate_legacy_managed_profiles(self):
+        if self.managed_profile_path.is_file():
+            self._remove_legacy_managed_profiles()
+            self._cleanup_empty_directories()
+            return
+
+        variant = None
+        if self.legacy_managed_green_tint_profile_path.is_file():
+            variant = PROFILE_VARIANT_GREEN
+        elif self.legacy_managed_base_profile_path.is_file():
+            variant = PROFILE_VARIANT_BASE
+
+        if variant == PROFILE_VARIANT_GREEN:
+            self._write_managed_profile(
+                self.managed_profile_path,
+                self._expected_green_profile_text(),
+            )
+        elif variant == PROFILE_VARIANT_BASE:
+            self._write_managed_profile(
+                self.managed_profile_path,
+                self._expected_base_profile_text(),
+            )
+
+        self._remove_legacy_managed_profiles()
+        self._cleanup_empty_directories()
+
+    def _get_managed_profile_verification_state(self):
+        if not self.managed_profile_path.is_file():
+            return PROFILE_VARIANT_ABSENT
+
+        try:
+            text = self._read_file(self.managed_profile_path)
+        except OSError:
+            return PROFILE_VARIANT_UNEXPECTED
+
+        if text == self._expected_base_profile_text():
+            return PROFILE_VARIANT_BASE
+        if text == self._expected_green_profile_text():
+            return PROFILE_VARIANT_GREEN
+        return PROFILE_VARIANT_UNEXPECTED
+
+    def is_builtin_profile_available(self):
+        return self._resolve_builtin_profile_path() is not None
+
+    def is_managed_base_profile_installed(self):
+        self._migrate_legacy_managed_profiles()
+        return self.managed_profile_path.is_file()
+
+    def is_green_tint_fix_enabled(self):
+        self._migrate_legacy_managed_profiles()
+        return self._get_managed_profile_verification_state() == PROFILE_VARIANT_GREEN
+
+    def is_base_profile_available(self):
+        return self.is_builtin_profile_available() or self.is_managed_base_profile_installed()
+
+    def get_state(self):
+        self._migrate_legacy_managed_profiles()
+        verification_state = self._get_managed_profile_verification_state()
+        return {
+            "gamescopeZotacProfileBuiltIn": self.is_builtin_profile_available(),
+            "gamescopeZotacProfileInstalled": verification_state != PROFILE_VARIANT_ABSENT,
+            "gamescopeGreenTintFixEnabled": verification_state == PROFILE_VARIANT_GREEN,
+            "gamescopeZotacProfileTargetPath": str(self.managed_profile_path),
+            "gamescopeZotacProfileVerificationState": verification_state,
+        }
+
     def set_zotac_profile_enabled(self, enabled):
+        self._migrate_legacy_managed_profiles()
         if enabled:
             self._write_managed_profile(
-                self.managed_base_profile_path,
-                self._read_asset("zotac.zone.oled.lua"),
+                self.managed_profile_path,
+                self._expected_base_profile_text(),
             )
             return self.get_state()
 
-        self._remove_managed_profile(self.managed_base_profile_path)
-        if not self.is_builtin_profile_available():
-            self._remove_managed_profile(self.managed_green_tint_profile_path)
+        self._remove_managed_profile(self.managed_profile_path)
         self._cleanup_empty_directories()
         return self.get_state()
 
     def set_green_tint_fix_enabled(self, enabled):
+        self._migrate_legacy_managed_profiles()
         if enabled:
             if not self.is_base_profile_available():
                 return self.get_state()
 
             self._write_managed_profile(
-                self.managed_green_tint_profile_path,
-                self._read_asset("zotac.zone.green-tint.lua"),
+                self.managed_profile_path,
+                self._expected_green_profile_text(),
             )
             return self.get_state()
 
-        self._remove_managed_profile(self.managed_green_tint_profile_path)
+        if self.is_builtin_profile_available():
+            self._remove_managed_profile(self.managed_profile_path)
+        elif self.managed_profile_path.is_file():
+            self._write_managed_profile(
+                self.managed_profile_path,
+                self._expected_base_profile_text(),
+            )
+        else:
+            self._remove_managed_profile(self.managed_profile_path)
+
         self._cleanup_empty_directories()
         return self.get_state()
 
     def cleanup_managed_files(self):
-        self._remove_managed_profile(self.managed_green_tint_profile_path)
-        self._remove_managed_profile(self.managed_base_profile_path)
+        self._remove_managed_profile(self.managed_profile_path)
+        self._remove_legacy_managed_profiles()
         self._cleanup_empty_directories()
         return self.get_state()
