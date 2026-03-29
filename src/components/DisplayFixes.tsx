@@ -33,6 +33,9 @@ function getGreenTintDescription(settings: PluginSettings, isBaseProfileAvailabl
 }
 
 const DisplayFixes = ({ settings, onSettingsChange, onStatusChange }: Props) => {
+  // TODO: If rapid toggling ever causes stale UI state, serialize these requests
+  // or ignore out-of-order responses instead of relying only on disabled toggles
+  // and backend file-state readback.
   const [savingZotacProfile, setSavingZotacProfile] = useState(false)
   const [savingGreenTintFix, setSavingGreenTintFix] = useState(false)
   const isBaseProfileAvailable = settings.gamescopeZotacProfileBuiltIn || settings.gamescopeZotacProfileInstalled
