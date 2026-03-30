@@ -1986,6 +1986,117 @@ mapping:
             self.assertTrue(settings["gamescopeGreenTintFixEnabled"])
             self.assertEqual(settings["gamescopeZotacProfileVerificationState"], "green")
 
+    async def test_gamescope_display_get_state_returns_error_when_legacy_cleanup_raises_permission_error(self):
+        with tempfile.TemporaryDirectory() as temp_home, tempfile.TemporaryDirectory() as temp_plugin_dir:
+            _write_gamescope_display_assets(Path(temp_plugin_dir))
+            helper = main.gamescope_display_profiles.GamescopeDisplayProfiles(
+                user_home=temp_home,
+                plugin_dir=temp_plugin_dir,
+                system_profile_paths=[],
+            )
+            helper._migrate_legacy_managed_profiles = lambda: (_ for _ in ()).throw(
+                PermissionError("denied")
+            )
+
+            settings = helper.get_state()
+
+            self.assertFalse(settings["gamescopeZotacProfileBuiltIn"])
+            self.assertFalse(settings["gamescopeZotacProfileInstalled"])
+            self.assertFalse(settings["gamescopeGreenTintFixEnabled"])
+            self.assertEqual(
+                settings["gamescopeZotacProfileTargetPath"],
+                str(Path(temp_home) / ".config" / "gamescope" / "scripts" / "zotac.zone.oled.lua"),
+            )
+            self.assertEqual(settings["gamescopeZotacProfileVerificationState"], "error")
+
+    async def test_get_settings_uses_safe_display_defaults_when_display_helper_throws(self):
+        logger = _FakeLogger()
+
+        class _BrokenDisplayProfiles:
+            def get_state(self):
+                raise RuntimeError("display bootstrap failed")
+
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            logger=logger,
+            read_text=lambda path: "",
+            gamescope_display_profiles=_BrokenDisplayProfiles(),
+        )
+        service.probe_inputplumber_available = lambda: False
+        service.probe_rumble_available = lambda: False
+
+        settings = service.get_settings()
+
+        self.assertFalse(settings["gamescopeZotacProfileBuiltIn"])
+        self.assertFalse(settings["gamescopeZotacProfileInstalled"])
+        self.assertFalse(settings["gamescopeGreenTintFixEnabled"])
+        self.assertEqual(
+            settings["gamescopeZotacProfileTargetPath"],
+            str(Path("/tmp/decky-user") / ".config" / "gamescope" / "scripts" / "zotac.zone.oled.lua"),
+        )
+        self.assertEqual(settings["gamescopeZotacProfileVerificationState"], "error")
+        warning_messages = [args[0] for level, args, _ in logger.messages if level == "warning"]
+        self.assertTrue(
+            any("Failed to read Gamescope display profile state:" in message for message in warning_messages)
+        )
+
+    async def test_set_gamescope_zotac_profile_enabled_still_raises_when_managed_write_fails(self):
+        class _FailingDisplayProfiles:
+            def set_zotac_profile_enabled(self, enabled):
+                raise PermissionError("write denied")
+
+            def get_state(self):
+                return {
+                    "gamescopeZotacProfileBuiltIn": False,
+                    "gamescopeZotacProfileInstalled": False,
+                    "gamescopeGreenTintFixEnabled": False,
+                    "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                    "gamescopeZotacProfileVerificationState": "absent",
+                }
+
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: "",
+            gamescope_display_profiles=_FailingDisplayProfiles(),
+        )
+
+        with self.assertRaises(PermissionError):
+            await service.set_gamescope_zotac_profile_enabled(True)
+
+    async def test_remove_gamescope_display_profiles_does_not_raise_when_cleanup_fails(self):
+        logger = _FakeLogger()
+
+        class _FailingCleanupDisplayProfiles:
+            def cleanup_managed_files(self):
+                raise PermissionError("cleanup denied")
+
+            def get_state(self):
+                return {
+                    "gamescopeZotacProfileBuiltIn": False,
+                    "gamescopeZotacProfileInstalled": False,
+                    "gamescopeGreenTintFixEnabled": False,
+                    "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                    "gamescopeZotacProfileVerificationState": "absent",
+                }
+
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            logger=logger,
+            read_text=lambda path: "",
+            gamescope_display_profiles=_FailingCleanupDisplayProfiles(),
+        )
+
+        settings = service.remove_gamescope_display_profiles()
+
+        self.assertEqual(settings["gamescopeZotacProfileVerificationState"], "absent")
+        warning_messages = [args[0] for level, args, _ in logger.messages if level == "warning"]
+        self.assertTrue(
+            any("Failed to remove Gamescope display profiles:" in message for message in warning_messages)
+        )
+
     async def test_handle_brightness_dial_input_event_emits_up(self):
         emitted = []
         service = main.DeckyZoneService(
@@ -2967,171 +3078,195 @@ class PluginLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
 class FrontendSourceTests(unittest.TestCase):
     def test_index_uses_controller_panel_with_rumble_controls(self):
-        source = Path(__file__).resolve().parents[1].joinpath("src", "index.tsx").read_text()
+        repo_root = Path(__file__).resolve().parents[1]
+        index_source = repo_root.joinpath("src", "index.tsx").read_text()
+        controller_panel_path = repo_root.joinpath("src", "components", "ControllerPanel.tsx")
+        display_panel_path = repo_root.joinpath("src", "components", "DisplayPanel.tsx")
+        updates_panel_path = repo_root.joinpath("src", "components", "UpdatesPanel.tsx")
+        boundary_path = repo_root.joinpath("src", "components", "ErrorBoundary.tsx")
 
-        self.assertIn('title="Controller"', source)
-        self.assertIn("ButtonItem", source)
-        self.assertIn("Router.MainRunningApp", source)
-        self.assertIn('Enable Controller', source)
-        self.assertIn('Button Prompt Fix', source)
-        self.assertIn('Enable Brightness Dial', source)
-        self.assertIn('Enable Home Button', source)
-        self.assertIn('Vibration / Rumble', source)
-        self.assertIn('homeButtonEnabled', source)
-        self.assertIn('setHomeButtonEnabled = callable<[boolean], PluginSettings>', source)
-        self.assertIn('set_home_button_enabled', source)
-        self.assertIn('brightnessDialFixEnabled', source)
-        self.assertIn('setBrightnessDialFixEnabled = callable<[boolean], PluginSettings>', source)
-        self.assertIn('set_brightness_dial_fix_enabled', source)
-        self.assertIn('setMissingGlyphFixEnabled = callable<[string, boolean], PluginSettings>', source)
-        self.assertIn('set_missing_glyph_fix_enabled', source)
-        self.assertIn('syncMissingGlyphFixTarget = callable<[string], boolean>', source)
-        self.assertIn('set_missing_glyph_fix_trackpads_disabled', source)
-        self.assertIn('setMissingGlyphFixTrackpadsDisabled = callable<[string, boolean], PluginSettings>', source)
-        self.assertIn('testRumble = callable<[], boolean>', source)
-        self.assertIn('handleTestRumble', source)
-        self.assertIn("missingGlyphFixGames", source)
-        self.assertIn("disableTrackpads", source)
-        self.assertIn("icon_data_format", source)
-        self.assertIn("icon_hash", source)
-        self.assertIn("local_cache_version", source)
-        self.assertIn("Launch a game to enable this fix.", source)
-        self.assertIn("Fixes button prompts and glyphs for", source)
-        self.assertIn("getActiveGameIconSource", source)
-        self.assertIn("class RunningApps", source)
-        self.assertIn("RunningApps.register()", source)
-        self.assertIn("RunningApps.unregister()", source)
-        self.assertIn("RunningApps.listenActiveChange", source)
-        self.assertIn("void syncActiveGameTarget(RunningApps.active())", source)
-        self.assertIn("type BootstrapState =", source)
-        self.assertIn("let bootstrapState: BootstrapState = { state: 'loading' }", source)
-        self.assertIn("let bootstrapPromise: Promise<void> | null = null", source)
-        self.assertIn("Promise.all([getStatus(), getSettings()])", source)
-        self.assertIn("function startBootstrap()", source)
-        self.assertIn("void startBootstrap()", source)
-        self.assertIn("Navigation.Navigate('/library/home')", source)
-        self.assertIn("Navigation.CloseSideMenus()", source)
-        self.assertIn("if (!homeButtonEnabled) {", source)
-        self.assertIn("'zotac_home_short_pressed'", source)
-        self.assertIn("SteamSpinner", source)
-        self.assertIn("if (bootstrap.state === 'loading')", source)
-        self.assertIn("if (bootstrap.state === 'error')", source)
-        self.assertIn("const [bootstrap, setBootstrap] = useState<BootstrapState>(getBootstrapState())", source)
+        self.assertTrue(controller_panel_path.exists())
+        self.assertTrue(display_panel_path.exists())
+        self.assertTrue(updates_panel_path.exists())
+        self.assertTrue(boundary_path.exists())
+
+        controller_source = controller_panel_path.read_text()
+        display_source = display_panel_path.read_text()
+        updates_source = updates_panel_path.read_text()
+        boundary_source = boundary_path.read_text()
+
+        self.assertIn('import ControllerPanel from "./components/ControllerPanel"', index_source)
+        self.assertIn('import DisplayPanel from "./components/DisplayPanel"', index_source)
+        self.assertIn('import UpdatesPanel from "./components/UpdatesPanel"', index_source)
+        self.assertIn('import ErrorBoundary from "./components/ErrorBoundary"', index_source)
+        self.assertIn('<ErrorBoundary title="Controller">', index_source)
+        self.assertIn("<ControllerPanel", index_source)
+        self.assertIn('<ErrorBoundary title="Display">', index_source)
+        self.assertIn('<ErrorBoundary title="Updates">', index_source)
+        self.assertIn("<DisplayPanel", index_source)
+        self.assertIn("<UpdatesPanel", index_source)
+        self.assertIn("type BootstrapState =", index_source)
+        self.assertIn("let bootstrapState: BootstrapState = { state: 'loading' }", index_source)
+        self.assertIn("let bootstrapPromise: Promise<void> | null = null", index_source)
+        self.assertIn("Promise.all([getStatus(), getSettings()])", index_source)
+        self.assertIn("function startBootstrap()", index_source)
+        self.assertIn("void startBootstrap()", index_source)
+        self.assertIn("Navigation.Navigate('/library/home')", index_source)
+        self.assertIn("Navigation.CloseSideMenus()", index_source)
+        self.assertIn("if (!homeButtonEnabled) {", index_source)
+        self.assertIn("'zotac_home_short_pressed'", index_source)
+        self.assertIn("SteamSpinner", index_source)
+        self.assertIn("if (bootstrap.state === 'loading')", index_source)
+        self.assertIn("if (bootstrap.state === 'error')", index_source)
+        self.assertIn("const [bootstrap, setBootstrap] = useState<BootstrapState>(getBootstrapState())", index_source)
         self.assertIn(
             "const [activeGame, setActiveGame] = useState<ActiveGame | null>(getActiveGame())",
-            source,
+            index_source,
         )
-        self.assertIn("setInterval(() => {", source)
-        self.assertIn('SteamClient.System.Display.RegisterForBrightnessChanges', source)
-        self.assertIn('SteamClient.System.Display.SetBrightness(', source)
-        self.assertIn('addEventListener', source)
-        self.assertIn('removeEventListener', source)
-        self.assertIn("'brightness_dial_input'", source)
-        self.assertIn('Disable Trackpads', source)
-        self.assertIn("isTrackpadsDisabled", source)
-        self.assertIn("const isMissingGlyphFixActive = settings.inputplumberAvailable && isMissingGlyphFixEnabled", source)
-        self.assertIn("GetCachedAppDetails", source)
-        self.assertIn("RegisterForAppDetails", source)
-        self.assertIn("Steam Input disabled", source)
-        self.assertIn("Steam Input state unavailable", source)
-        self.assertIn(">Steam Input disabled</div>", source)
-        self.assertIn("gamepadDialogClasses.FieldDescription", source)
-        self.assertNotIn("<Field disabled>Steam Input probably disabled for this game.</Field>", source)
-        self.assertNotIn('label="Steam Input Diagnostic"', source)
-        self.assertNotIn("eEnableThirdPartyControllerConfiguration: ${", source)
-        self.assertNotIn("eSteamInputControllerMask: ${", source)
-        self.assertNotIn("bShowControllerConfig: ${", source)
-        self.assertIn("rumbleMessageKind", source)
-        self.assertIn("rumbleMessageKind === 'error' ? 'red' : undefined", source)
-        self.assertIn("Sets the Zotac controller now and after boot. Makes the dials work.", source)
-        self.assertIn("Opens Home.", source)
-        self.assertIn("Opens Home. Enable Controller first.", source)
-        self.assertIn("Uses the right dial for screen brightness.", source)
-        self.assertIn("Uses the right dial for screen brightness. Enable Controller first.", source)
-        self.assertIn("Change and test vibration intensity.", source)
-        self.assertIn("Rumble device is not available.", source)
-        self.assertIn("settings.rumbleEnabled &&", source)
-        self.assertIn("getRumbleDescription(settings)", source)
-        self.assertNotIn("getRumbleDescription(settings, rumbleMessage)", source)
-        self.assertIn("rumbleIntensityDraft", source)
-        self.assertIn("rumbleIntensitySaveTimeout", source)
-        self.assertIn("value={rumbleIntensityDraft}", source)
-        self.assertIn("setTimeout(() => {", source)
-        self.assertIn("const inputplumberDependentControlDisabled = !settings.inputplumberAvailable", source)
-        self.assertIn("disabled={savingStartup || !settings.inputplumberAvailable}", source)
-        self.assertIn("const controllerDependentToggleDisabled = !settings.startupApplyEnabled", source)
+        self.assertIn("class RunningApps", index_source)
+        self.assertIn("RunningApps.register()", index_source)
+        self.assertIn("RunningApps.unregister()", index_source)
+        self.assertIn("RunningApps.listenActiveChange", index_source)
+        self.assertIn("void syncActiveGameTarget(RunningApps.active())", index_source)
+        self.assertIn("setInterval(() => {", index_source)
+        self.assertIn('SteamClient.System.Display.RegisterForBrightnessChanges', index_source)
+        self.assertIn('SteamClient.System.Display.SetBrightness(', index_source)
+        self.assertIn('addEventListener', index_source)
+        self.assertIn('removeEventListener', index_source)
+        self.assertIn("'brightness_dial_input'", index_source)
+        self.assertIn("getDerivedStateFromError", boundary_source)
+        self.assertIn("componentDidCatch", boundary_source)
+        self.assertIn('title: string', boundary_source)
+        self.assertIn('Failed to render this panel.', boundary_source)
+        self.assertIn("console.error", boundary_source)
+        self.assertIn('title="Display"', display_source)
+        self.assertIn('title="Updates"', updates_source)
+
+        self.assertIn('title="Controller"', controller_source)
+        self.assertIn("ButtonItem", controller_source)
+        self.assertIn('Enable Controller', controller_source)
+        self.assertIn('Button Prompt Fix', controller_source)
+        self.assertIn('Enable Brightness Dial', controller_source)
+        self.assertIn('Enable Home Button', controller_source)
+        self.assertIn('Vibration / Rumble', controller_source)
+        self.assertIn('homeButtonEnabled', controller_source)
+        self.assertIn('brightnessDialFixEnabled', controller_source)
+        self.assertIn('setHomeButtonEnabled = callable<[boolean], PluginSettings>', controller_source)
+        self.assertIn('set_home_button_enabled', controller_source)
+        self.assertIn('setBrightnessDialFixEnabled = callable<[boolean], PluginSettings>', controller_source)
+        self.assertIn('set_brightness_dial_fix_enabled', controller_source)
+        self.assertIn('setMissingGlyphFixEnabled = callable<[string, boolean], PluginSettings>', controller_source)
+        self.assertIn('set_missing_glyph_fix_enabled', controller_source)
+        self.assertIn('syncMissingGlyphFixTarget = callable<[string], boolean>', controller_source)
+        self.assertIn('set_missing_glyph_fix_trackpads_disabled', controller_source)
+        self.assertIn('setMissingGlyphFixTrackpadsDisabled = callable<[string, boolean], PluginSettings>', controller_source)
+        self.assertIn('testRumble = callable<[], boolean>', controller_source)
+        self.assertIn('handleTestRumble', controller_source)
+        self.assertIn("missingGlyphFixGames", controller_source)
+        self.assertIn("disableTrackpads", controller_source)
+        self.assertIn("icon_data_format", controller_source)
+        self.assertIn("icon_hash", controller_source)
+        self.assertIn("local_cache_version", controller_source)
+        self.assertIn("Launch a game to enable this fix.", controller_source)
+        self.assertIn("Fixes button prompts and glyphs for", controller_source)
+        self.assertIn("getActiveGameIconSource", controller_source)
+        self.assertIn('Disable Trackpads', controller_source)
+        self.assertIn("isTrackpadsDisabled", controller_source)
+        self.assertIn("const isMissingGlyphFixActive = settings.inputplumberAvailable && isMissingGlyphFixEnabled", controller_source)
+        self.assertIn("GetCachedAppDetails", controller_source)
+        self.assertIn("RegisterForAppDetails", controller_source)
+        self.assertIn("Steam Input disabled", controller_source)
+        self.assertIn("Steam Input state unavailable", controller_source)
+        self.assertIn(">Steam Input disabled</div>", controller_source)
+        self.assertIn("gamepadDialogClasses.FieldDescription", controller_source)
+        self.assertNotIn("<Field disabled>Steam Input probably disabled for this game.</Field>", controller_source)
+        self.assertNotIn('label="Steam Input Diagnostic"', controller_source)
+        self.assertNotIn("eEnableThirdPartyControllerConfiguration: ${", controller_source)
+        self.assertNotIn("eSteamInputControllerMask: ${", controller_source)
+        self.assertNotIn("bShowControllerConfig: ${", controller_source)
+        self.assertIn("rumbleMessageKind", controller_source)
+        self.assertIn("rumbleMessageKind === 'error' ? 'red' : undefined", controller_source)
+        self.assertIn("Sets the Zotac controller now and after boot. Makes the dials work.", controller_source)
+        self.assertIn("Opens Home.", controller_source)
+        self.assertIn("Opens Home. Enable Controller first.", controller_source)
+        self.assertIn("Uses the right dial for screen brightness.", controller_source)
+        self.assertIn("Uses the right dial for screen brightness. Enable Controller first.", controller_source)
+        self.assertIn("Change and test vibration intensity.", controller_source)
+        self.assertIn("Rumble device is not available.", controller_source)
+        self.assertIn("settings.rumbleEnabled &&", controller_source)
+        self.assertIn("getRumbleDescription(settings)", controller_source)
+        self.assertNotIn("getRumbleDescription(settings, rumbleMessage)", controller_source)
+        self.assertIn("rumbleIntensityDraft", controller_source)
+        self.assertIn("rumbleIntensitySaveTimeout", controller_source)
+        self.assertIn("value={rumbleIntensityDraft}", controller_source)
+        self.assertIn("setTimeout(() => {", controller_source)
+        self.assertIn("const inputplumberDependentControlDisabled = !settings.inputplumberAvailable", controller_source)
+        self.assertIn("disabled={savingStartup || !settings.inputplumberAvailable}", controller_source)
+        self.assertIn("const controllerDependentToggleDisabled = !settings.startupApplyEnabled", controller_source)
         self.assertIn(
             "disabled={savingHomeButton || !settings.startupApplyEnabled || !settings.inputplumberAvailable}",
-            source,
+            controller_source,
         )
         self.assertIn(
             "disabled={savingBrightnessDialFix || !settings.startupApplyEnabled || !settings.inputplumberAvailable}",
-            source,
+            controller_source,
         )
-        self.assertIn("InputPlumber is not available.", source)
-        self.assertIn(
-            "inputplumberDependentControlDisabled",
-            source,
-        )
-        self.assertIn(
-            "inputplumberDependentControlDisabled\n                ? 'InputPlumber is not available.'",
-            source,
-        )
-        self.assertIn("disabled={savingRumble}", source)
+        self.assertIn("InputPlumber is not available.", controller_source)
+        self.assertIn("inputplumberDependentControlDisabled", controller_source)
+        self.assertIn("inputplumberDependentControlDisabled", controller_source)
+        self.assertIn("? 'InputPlumber is not available.'", controller_source)
+        self.assertIn("disabled={savingRumble}", controller_source)
         self.assertIn(
             "disabled={savingRumble || testingRumble || !settings.rumbleEnabled || !settings.rumbleAvailable || !settings.inputplumberAvailable}",
-            source,
+            controller_source,
         )
-        self.assertIn("!settings.rumbleEnabled", source)
-        self.assertIn("!settings.rumbleAvailable", source)
-        self.assertNotIn("savingIntensity", source)
-        self.assertNotIn("value={settings.rumbleIntensity}", source)
-        self.assertNotIn("const [settings, setSettings] = useState<PluginSettings>({", source)
-        self.assertNotIn("disabled={savingRumble || !settings.rumbleAvailable}", source)
-        self.assertNotIn("const activeGamePollInterval = window.setInterval(", source)
-        self.assertNotIn("clearInterval(activeGamePollInterval)", source)
-        self.assertNotIn("window.addEventListener(", source)
-        self.assertNotIn("<strong>State:</strong>", source)
-        self.assertNotIn("Dropdown", source)
-        self.assertNotIn('label="Home Button Action"', source)
-        self.assertNotIn("childrenContainerWidth=\"fixed\"", source)
-        self.assertNotIn("homeButtonAction", source)
-        self.assertNotIn("type HomeButtonAction", source)
-        self.assertNotIn("set_home_button_action", source)
-        self.assertNotIn("getHomeButtonManagedDescription", source)
-        self.assertNotIn("Home short opens SteamUI Home while this startup target is active.", source)
-        self.assertNotIn("Home short opens SteamUI Home while this Xbox Elite Mode is active.", source)
-        self.assertNotIn('title="Startup Mode"', source)
-        self.assertNotIn('title="Controller Fix"', source)
-        self.assertNotIn('label="Controller Fix"', source)
-        self.assertNotIn('label="Apply controller fix on startup"', source)
-        self.assertNotIn('label="Enable startup controller fix"', source)
-        self.assertNotIn('label="Enable vibration intensity fix"', source)
-        self.assertNotIn('label="Per-Game Overrides"', source)
-        self.assertNotIn("Reapply Startup Mode", source)
-        self.assertNotIn("Rumble helper or joystick device is not available.", source)
-        self.assertNotIn('Xbox Elite Mode', source)
-        self.assertNotIn('Vibration Intensity', source)
-        self.assertNotIn("Restores the Zotac controller after boot and enables the dials.", source)
-        self.assertNotIn("Zotac Home button opens Home.", source)
-        self.assertNotIn("Enable the right dial brightness.", source)
-        self.assertNotIn("Launch a game to enable this per-game Xbox Elite Mode.", source)
-        self.assertNotIn("Fixes missing glyphs for", source)
-        self.assertNotIn("This setting is per-game.", source)
-        self.assertNotIn("Turns off the trackpads while this glyph fix is active for the current game.", source)
-        self.assertIn("Turns off the trackpads while this fix is on.", source)
+        self.assertIn("!settings.rumbleEnabled", controller_source)
+        self.assertIn("!settings.rumbleAvailable", controller_source)
+        self.assertNotIn("savingIntensity", controller_source)
+        self.assertNotIn("value={settings.rumbleIntensity}", controller_source)
+        self.assertNotIn("const [settings, setSettings] = useState<PluginSettings>({", controller_source)
+        self.assertNotIn("disabled={savingRumble || !settings.rumbleAvailable}", controller_source)
+        self.assertNotIn("<strong>State:</strong>", controller_source)
+        self.assertNotIn("Dropdown", controller_source)
+        self.assertNotIn('label="Home Button Action"', controller_source)
+        self.assertNotIn("childrenContainerWidth=\"fixed\"", controller_source)
+        self.assertNotIn("homeButtonAction", controller_source)
+        self.assertNotIn("type HomeButtonAction", controller_source)
+        self.assertNotIn("set_home_button_action", controller_source)
+        self.assertNotIn("getHomeButtonManagedDescription", controller_source)
+        self.assertNotIn("Home short opens SteamUI Home while this startup target is active.", controller_source)
+        self.assertNotIn("Home short opens SteamUI Home while this Xbox Elite Mode is active.", controller_source)
+        self.assertNotIn('title="Startup Mode"', controller_source)
+        self.assertNotIn('title="Controller Fix"', controller_source)
+        self.assertNotIn('label="Controller Fix"', controller_source)
+        self.assertNotIn('label="Apply controller fix on startup"', controller_source)
+        self.assertNotIn('label="Enable startup controller fix"', controller_source)
+        self.assertNotIn('label="Enable vibration intensity fix"', controller_source)
+        self.assertNotIn('label="Per-Game Overrides"', controller_source)
+        self.assertNotIn("Reapply Startup Mode", controller_source)
+        self.assertNotIn("Rumble helper or joystick device is not available.", controller_source)
+        self.assertNotIn('Xbox Elite Mode', controller_source)
+        self.assertNotIn('Vibration Intensity', controller_source)
+        self.assertNotIn("Restores the Zotac controller after boot and enables the dials.", controller_source)
+        self.assertNotIn("Zotac Home button opens Home.", controller_source)
+        self.assertNotIn("Enable the right dial brightness.", controller_source)
+        self.assertNotIn("Launch a game to enable this per-game Xbox Elite Mode.", controller_source)
+        self.assertNotIn("Fixes missing glyphs for", controller_source)
+        self.assertNotIn("This setting is per-game.", controller_source)
+        self.assertNotIn("Turns off the trackpads while this glyph fix is active for the current game.", controller_source)
+        self.assertIn("Turns off the trackpads while this fix is on.", controller_source)
 
     def test_ota_updates_component_is_integrated(self):
         repo_root = Path(__file__).resolve().parents[1]
         index_source = repo_root.joinpath("src", "index.tsx").read_text()
-        component_path = repo_root.joinpath("src", "components", "OtaUpdates.tsx")
+        component_path = repo_root.joinpath("src", "components", "UpdatesPanel.tsx")
         plugin_types_source = repo_root.joinpath("src", "pluginTypes.ts").read_text()
 
         self.assertTrue(component_path.exists())
         component_source = component_path.read_text() if component_path.exists() else ""
 
-        self.assertIn('import OtaUpdates from "./components/OtaUpdates"', index_source)
-        self.assertIn("<OtaUpdates", index_source)
+        self.assertIn('import UpdatesPanel from "./components/UpdatesPanel"', index_source)
+        self.assertIn("<UpdatesPanel", index_source)
         self.assertIn("pluginVersionNum?: string", plugin_types_source)
         self.assertIn("installedVersionNum", component_source)
         self.assertIn("getLatestVersionNum", component_source)
@@ -3156,7 +3291,7 @@ class FrontendSourceTests(unittest.TestCase):
     def test_display_fixes_component_is_integrated(self):
         repo_root = Path(__file__).resolve().parents[1]
         index_source = repo_root.joinpath("src", "index.tsx").read_text()
-        component_path = repo_root.joinpath("src", "components", "DisplayFixes.tsx")
+        component_path = repo_root.joinpath("src", "components", "DisplayPanel.tsx")
         helper_path = repo_root.joinpath("py_modules", "gamescope_display_profiles.py")
         plugin_types_path = repo_root.joinpath("src", "pluginTypes.ts")
 
@@ -3168,14 +3303,14 @@ class FrontendSourceTests(unittest.TestCase):
         helper_source = helper_path.read_text()
         plugin_types_source = plugin_types_path.read_text()
 
-        self.assertIn('import DisplayFixes from "./components/DisplayFixes"', index_source)
-        self.assertIn('import type { PluginSettings, PluginStatus } from "./pluginTypes"', index_source)
-        self.assertIn("<DisplayFixes", index_source)
+        self.assertIn('import DisplayPanel from "./components/DisplayPanel"', index_source)
+        self.assertIn('import type { ActiveGame, PluginSettings, PluginStatus } from "./pluginTypes"', index_source)
+        self.assertIn("<DisplayPanel", index_source)
         self.assertNotIn("type PluginStatus = {", index_source)
         self.assertNotIn("type MissingGlyphFixGameSettings = {", index_source)
         self.assertNotIn("type PluginSettings = {", index_source)
         self.assertIn('title="Display"', component_source)
-        self.assertIn('import type { PluginSettings, PluginStatus } from "../pluginTypes"', component_source)
+        self.assertIn("import type { PluginSettings, PluginStatus } from '../pluginTypes'", component_source)
         self.assertIn('Enable Zotac OLED Profile', component_source)
         self.assertIn('Enable Green Tint Fix', component_source)
         self.assertIn('gamescopeZotacProfileBuiltIn', component_source)
@@ -3183,13 +3318,14 @@ class FrontendSourceTests(unittest.TestCase):
         self.assertIn('gamescopeGreenTintFixEnabled', component_source)
         self.assertIn('gamescopeZotacProfileTargetPath', component_source)
         self.assertIn('gamescopeZotacProfileVerificationState', component_source)
+        self.assertIn("gamescopeZotacProfileVerificationState === 'error'", component_source)
         self.assertIn('set_gamescope_zotac_profile_enabled', component_source)
         self.assertIn('set_gamescope_green_tint_fix_enabled', component_source)
         self.assertIn('const isBaseProfileAvailable = settings.gamescopeZotacProfileBuiltIn || settings.gamescopeZotacProfileInstalled', component_source)
         self.assertNotIn("type PluginStatus = {", component_source)
         self.assertNotIn("type MissingGlyphFixGameSettings = {", component_source)
         self.assertNotIn("type PluginSettings = {", component_source)
-        self.assertIn('Restart Gamescope or reboot', component_source)
+        self.assertIn("Unable to read or migrate the managed display profile state:", component_source)
         self.assertIn('Managed file:', component_source)
         self.assertIn('Use Native Color Temperature', component_source)
         self.assertIn('Settings -> Display -> Use Native Color Temperature', component_source)

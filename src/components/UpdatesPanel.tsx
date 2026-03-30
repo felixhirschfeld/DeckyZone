@@ -9,7 +9,7 @@ type Props = {
   installedVersionNum: string
 }
 
-const OtaUpdates = ({ installedVersionNum }: Props) => {
+const UpdatesPanel = ({ installedVersionNum }: Props) => {
   const [latestVersionNum, setLatestVersionNum] = useState("")
   const [latestVersionError, setLatestVersionError] = useState<string | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
@@ -115,4 +115,4 @@ const OtaUpdates = ({ installedVersionNum }: Props) => {
   )
 }
 
-export default OtaUpdates
+export default UpdatesPanel

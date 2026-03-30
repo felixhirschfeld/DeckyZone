@@ -11,6 +11,7 @@ PROFILE_VARIANT_ABSENT = "absent"
 PROFILE_VARIANT_BASE = "base"
 PROFILE_VARIANT_GREEN = "green"
 PROFILE_VARIANT_UNEXPECTED = "unexpected"
+PROFILE_VARIANT_ERROR = "error"
 
 
 class GamescopeDisplayProfiles:
@@ -86,9 +87,19 @@ class GamescopeDisplayProfiles:
         if path.exists():
             path.unlink()
 
+    def _remove_managed_profile_tolerant(self, path):
+        try:
+            self._remove_managed_profile(path)
+        except OSError:
+            pass
+
     def _remove_legacy_managed_profiles(self):
         self._remove_managed_profile(self.legacy_managed_green_tint_profile_path)
         self._remove_managed_profile(self.legacy_managed_base_profile_path)
+
+    def _remove_legacy_managed_profiles_tolerant(self):
+        self._remove_managed_profile_tolerant(self.legacy_managed_green_tint_profile_path)
+        self._remove_managed_profile_tolerant(self.legacy_managed_base_profile_path)
 
     def _cleanup_empty_directories(self):
         cleanup_paths = (
@@ -131,6 +142,19 @@ class GamescopeDisplayProfiles:
         self._remove_legacy_managed_profiles()
         self._cleanup_empty_directories()
 
+    def _fallback_state(self, verification_state=PROFILE_VARIANT_ERROR):
+        return {
+            "gamescopeZotacProfileBuiltIn": False,
+            "gamescopeZotacProfileInstalled": verification_state in (
+                PROFILE_VARIANT_BASE,
+                PROFILE_VARIANT_GREEN,
+                PROFILE_VARIANT_UNEXPECTED,
+            ),
+            "gamescopeGreenTintFixEnabled": verification_state == PROFILE_VARIANT_GREEN,
+            "gamescopeZotacProfileTargetPath": str(self.managed_profile_path),
+            "gamescopeZotacProfileVerificationState": verification_state,
+        }
+
     def _get_managed_profile_verification_state(self):
         if not self.managed_profile_path.is_file():
             return PROFILE_VARIANT_ABSENT
@@ -161,15 +185,18 @@ class GamescopeDisplayProfiles:
         return self.is_builtin_profile_available() or self.is_managed_base_profile_installed()
 
     def get_state(self):
-        self._migrate_legacy_managed_profiles()
-        verification_state = self._get_managed_profile_verification_state()
-        return {
-            "gamescopeZotacProfileBuiltIn": self.is_builtin_profile_available(),
-            "gamescopeZotacProfileInstalled": verification_state != PROFILE_VARIANT_ABSENT,
-            "gamescopeGreenTintFixEnabled": verification_state == PROFILE_VARIANT_GREEN,
-            "gamescopeZotacProfileTargetPath": str(self.managed_profile_path),
-            "gamescopeZotacProfileVerificationState": verification_state,
-        }
+        try:
+            self._migrate_legacy_managed_profiles()
+            verification_state = self._get_managed_profile_verification_state()
+            return {
+                "gamescopeZotacProfileBuiltIn": self.is_builtin_profile_available(),
+                "gamescopeZotacProfileInstalled": verification_state != PROFILE_VARIANT_ABSENT,
+                "gamescopeGreenTintFixEnabled": verification_state == PROFILE_VARIANT_GREEN,
+                "gamescopeZotacProfileTargetPath": str(self.managed_profile_path),
+                "gamescopeZotacProfileVerificationState": verification_state,
+            }
+        except OSError:
+            return self._fallback_state()
 
     def set_zotac_profile_enabled(self, enabled):
         self._migrate_legacy_managed_profiles()
@@ -210,7 +237,7 @@ class GamescopeDisplayProfiles:
         return self.get_state()
 
     def cleanup_managed_files(self):
-        self._remove_managed_profile(self.managed_profile_path)
-        self._remove_legacy_managed_profiles()
+        self._remove_managed_profile_tolerant(self.managed_profile_path)
+        self._remove_legacy_managed_profiles_tolerant()
         self._cleanup_empty_directories()
         return self.get_state()

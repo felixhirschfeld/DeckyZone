@@ -51,6 +51,15 @@ function getManagedFileMismatchMessage(label: string, enabled: boolean, path: st
 }
 
 function getManagedFileWarning(settings: PluginSettings) {
+  if (settings.gamescopeZotacProfileVerificationState === 'error') {
+    return (
+      <>
+        Unable to read or migrate the managed display profile state:{' '}
+        <span style={MANAGED_FILE_STYLE}>{settings.gamescopeZotacProfileTargetPath}</span>
+      </>
+    )
+  }
+
   if (!settings.gamescopeZotacProfileInstalled || settings.gamescopeZotacProfileVerificationState !== 'unexpected') {
     return null
   }
@@ -63,7 +72,7 @@ function getManagedFileWarning(settings: PluginSettings) {
   )
 }
 
-const DisplayFixes = ({ settings, onSettingsChange, onStatusChange }: Props) => {
+const DisplayPanel = ({ settings, onSettingsChange, onStatusChange }: Props) => {
   // TODO: If rapid toggling ever causes stale UI state, serialize these requests
   // or ignore out-of-order responses instead of relying only on disabled toggles
   // and backend file-state readback.
@@ -147,4 +156,4 @@ const DisplayFixes = ({ settings, onSettingsChange, onStatusChange }: Props) => 
   )
 }
 
-export default DisplayFixes
+export default DisplayPanel

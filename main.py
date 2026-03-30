@@ -188,7 +188,23 @@ class DeckyZoneService:
             return handle.read().strip()
 
     def _current_settings(self):
-        display_profile_settings = self.gamescope_display_profiles.get_state()
+        try:
+            display_profile_settings = self.gamescope_display_profiles.get_state()
+        except Exception as error:
+            self.logger.warning(f"Failed to read Gamescope display profile state: {error}")
+            display_profile_settings = {
+                "gamescopeZotacProfileBuiltIn": False,
+                "gamescopeZotacProfileInstalled": False,
+                "gamescopeGreenTintFixEnabled": False,
+                "gamescopeZotacProfileTargetPath": str(
+                    Path(decky.DECKY_USER_HOME)
+                    / ".config"
+                    / "gamescope"
+                    / "scripts"
+                    / "zotac.zone.oled.lua"
+                ),
+                "gamescopeZotacProfileVerificationState": "error",
+            }
         return {
             "startupApplyEnabled": self.settings_store.get_startup_apply_enabled(),
             "homeButtonEnabled": self.settings_store.get_home_button_enabled(),
@@ -1174,7 +1190,10 @@ class DeckyZoneService:
         return self._current_settings()
 
     def remove_gamescope_display_profiles(self):
-        self.gamescope_display_profiles.cleanup_managed_files()
+        try:
+            self.gamescope_display_profiles.cleanup_managed_files()
+        except Exception as error:
+            self.logger.warning(f"Failed to remove Gamescope display profiles: {error}")
         return self._current_settings()
 
     # TODO: Keep using the current FF_GAIN path for now. Zotac may also support
