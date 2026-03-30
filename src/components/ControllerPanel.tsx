@@ -1,14 +1,9 @@
 import { callable } from '@decky/api'
-import {
-  ButtonItem,
-  PanelSection,
-  PanelSectionRow,
-  SliderField,
-  ToggleField,
-  gamepadDialogClasses,
-} from '@decky/ui'
+import { PanelSection } from '@decky/ui'
 import { useEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import ControllerTogglesPanel from './controller/ControllerTogglesPanel'
+import GlyphFixPanel from './controller/GlyphFixPanel'
+import RumblePanel from './controller/RumblePanel'
 import type { ActiveGame, PluginSettings, PluginStatus } from '../pluginTypes'
 
 type SteamInputDiagnosticAppDetails = {
@@ -46,88 +41,7 @@ const setRumbleIntensity = callable<[number], PluginSettings>('set_rumble_intens
 const testRumble = callable<[], boolean>('test_rumble')
 
 const DEFAULT_APP_ID = '0'
-const DEFAULT_STARTUP_DESCRIPTION = 'Sets the Zotac controller now and after boot. Makes the dials work.'
-const HOME_BUTTON_TOGGLE_DESCRIPTION = 'Opens Home.'
-const HOME_BUTTON_TOGGLE_DISABLED_DESCRIPTION = 'Opens Home. Enable Controller first.'
-const DEFAULT_BRIGHTNESS_DIAL_FIX_DESCRIPTION = 'Uses the right dial for screen brightness.'
-const BRIGHTNESS_DIAL_FIX_DISABLED_DESCRIPTION = 'Uses the right dial for screen brightness. Enable Controller first.'
-const DEFAULT_RUMBLE_DESCRIPTION = 'Change and test vibration intensity.'
-const RUMBLE_UNAVAILABLE_MESSAGE = 'Rumble device is not available.'
-const NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION = 'Launch a game to enable this fix.'
-const DISABLE_TRACKPADS_DESCRIPTION = 'Turns off the trackpads while this fix is on.'
 const STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE = 'Steam Input state unavailable.'
-
-function getStartupDescription(status: PluginStatus, settings: PluginSettings) {
-  if (!settings.inputplumberAvailable) {
-    return 'InputPlumber is not available.'
-  }
-
-  if (status.state === 'failed' || status.state === 'disabled' || status.state === 'unsupported') {
-    return status.message
-  }
-
-  return DEFAULT_STARTUP_DESCRIPTION
-}
-
-function getRumbleDescription(settings: PluginSettings) {
-  if (!settings.rumbleAvailable) {
-    return RUMBLE_UNAVAILABLE_MESSAGE
-  }
-
-  return DEFAULT_RUMBLE_DESCRIPTION
-}
-
-function getBrightnessDialFixDescription(settings: PluginSettings) {
-  if (!settings.inputplumberAvailable) {
-    return 'InputPlumber is not available.'
-  }
-
-  if (!settings.startupApplyEnabled) {
-    return BRIGHTNESS_DIAL_FIX_DISABLED_DESCRIPTION
-  }
-
-  return DEFAULT_BRIGHTNESS_DIAL_FIX_DESCRIPTION
-}
-
-function getActiveGameIconSource(activeGame: ActiveGame | null) {
-  if (!activeGame) {
-    return null
-  }
-
-  if (activeGame.icon_data && activeGame.icon_data_format) {
-    return `data:image/${activeGame.icon_data_format};base64,${activeGame.icon_data}`
-  }
-
-  if (activeGame.icon_hash) {
-    return `/assets/${activeGame.appid}/${activeGame.icon_hash}.jpg?c=${activeGame.local_cache_version ?? ''}`
-  }
-
-  return null
-}
-
-function getMissingGlyphFixDescription(activeGame: ActiveGame | null): ReactNode {
-  if (!activeGame) {
-    return NO_ACTIVE_GAME_GLYPH_FIX_DESCRIPTION
-  }
-
-  const iconSource = getActiveGameIconSource(activeGame)
-  const description = `Fixes button prompts and glyphs for ${activeGame.display_name}.`
-
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-      {iconSource ? <img src={iconSource} width={20} height={20} style={{ borderRadius: '4px', flexShrink: 0 }} /> : null}
-      <div
-        style={{
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {description}
-      </div>
-    </div>
-  )
-}
 
 function normalizeSteamInputDiagnosticDetails(rawDetails: unknown): SteamInputDiagnosticAppDetails | null {
   let parsedDetails = rawDetails
@@ -460,114 +374,43 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
 
   const shouldShowSteamInputDisabledWarning =
     steamInputDiagnostic.state === 'ready' && getSteamInputDiagnosticStatus(steamInputDiagnostic.details) === 'Steam Input disabled'
-  const controllerDependentToggleDisabled = !settings.startupApplyEnabled
-  const inputplumberDependentControlDisabled = !settings.inputplumberAvailable
   const isMissingGlyphFixActive = settings.inputplumberAvailable && isMissingGlyphFixEnabled
 
   return (
     <PanelSection title="Controller">
-      <PanelSectionRow>
-        <ToggleField
-          label="Enable Controller"
-          checked={settings.startupApplyEnabled}
-          onChange={(value: boolean) => void handleStartupToggleChange(value)}
-          disabled={savingStartup || !settings.inputplumberAvailable}
-          description={getStartupDescription(status, settings)}
-        />
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ToggleField
-          label="Enable Home Button"
-          checked={settings.homeButtonEnabled}
-          onChange={(value: boolean) => void handleHomeButtonToggleChange(value)}
-          disabled={savingHomeButton || !settings.startupApplyEnabled || !settings.inputplumberAvailable}
-          description={
-            inputplumberDependentControlDisabled
-              ? 'InputPlumber is not available.'
-              : controllerDependentToggleDisabled
-                ? HOME_BUTTON_TOGGLE_DISABLED_DESCRIPTION
-                : HOME_BUTTON_TOGGLE_DESCRIPTION
-          }
-        />
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ToggleField
-          label="Enable Brightness Dial"
-          checked={settings.brightnessDialFixEnabled}
-          onChange={(value: boolean) => void handleBrightnessDialFixToggleChange(value)}
-          disabled={savingBrightnessDialFix || !settings.startupApplyEnabled || !settings.inputplumberAvailable}
-          description={getBrightnessDialFixDescription(settings)}
-        />
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ToggleField
-          label="Vibration / Rumble"
-          checked={settings.rumbleEnabled}
-          onChange={(value: boolean) => void handleRumbleToggleChange(value)}
-          disabled={savingRumble}
-          description={getRumbleDescription(settings)}
-        />
-      </PanelSectionRow>
-      {settings.rumbleEnabled && (
-        <>
-          <PanelSectionRow>
-            <SliderField
-              value={rumbleIntensityDraft}
-              min={0}
-              max={100}
-              step={5}
-              notchTicksVisible
-              onChange={handleRumbleIntensityChange}
-              disabled={savingRumble || !settings.rumbleEnabled || !settings.rumbleAvailable}
-            />
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={() => void handleTestRumble()}
-              disabled={savingRumble || testingRumble || !settings.rumbleEnabled || !settings.rumbleAvailable || !settings.inputplumberAvailable}
-            >
-              {testingRumble ? 'Testing Rumble...' : `Test  ${rumbleIntensityDraft}% Rumble`}
-            </ButtonItem>
-          </PanelSectionRow>
-          {rumbleMessage && rumbleMessageKind === 'error' && (
-            <PanelSectionRow>
-              <div
-                style={{
-                  color: rumbleMessageKind === 'error' ? 'red' : undefined,
-                }}
-              >
-                {rumbleMessage}
-              </div>
-            </PanelSectionRow>
-          )}
-        </>
-      )}
-      <PanelSectionRow>
-        <ToggleField
-          label="Button Prompt Fix"
-          checked={isMissingGlyphFixEnabled}
-          onChange={(value: boolean) => void handleMissingGlyphFixToggleChange(value)}
-          disabled={!activeGame || savingMissingGlyphFix || !settings.inputplumberAvailable}
-          description={settings.inputplumberAvailable ? getMissingGlyphFixDescription(activeGame) : 'InputPlumber is not available.'}
-        />
-      </PanelSectionRow>
-      {activeGame && isMissingGlyphFixActive && shouldShowSteamInputDisabledWarning && (
-        <PanelSectionRow>
-          <div className={gamepadDialogClasses.FieldDescription}>Steam Input disabled</div>
-        </PanelSectionRow>
-      )}
-      {activeGame && isMissingGlyphFixActive && (
-        <PanelSectionRow>
-          <ToggleField
-            label="Disable Trackpads"
-            checked={isTrackpadsDisabled}
-            onChange={(value: boolean) => void handleMissingGlyphFixTrackpadsChange(value)}
-            disabled={savingMissingGlyphFix || savingMissingGlyphFixTrackpads}
-            description={DISABLE_TRACKPADS_DESCRIPTION}
-          />
-        </PanelSectionRow>
-      )}
+      <ControllerTogglesPanel
+        status={status}
+        settings={settings}
+        savingStartup={savingStartup}
+        savingHomeButton={savingHomeButton}
+        savingBrightnessDialFix={savingBrightnessDialFix}
+        onStartupToggleChange={(value: boolean) => void handleStartupToggleChange(value)}
+        onHomeButtonToggleChange={(value: boolean) => void handleHomeButtonToggleChange(value)}
+        onBrightnessDialFixToggleChange={(value: boolean) => void handleBrightnessDialFixToggleChange(value)}
+      />
+      <RumblePanel
+        settings={settings}
+        savingRumble={savingRumble}
+        testingRumble={testingRumble}
+        rumbleIntensityDraft={rumbleIntensityDraft}
+        rumbleMessage={rumbleMessage}
+        rumbleMessageKind={rumbleMessageKind}
+        onRumbleToggleChange={(value: boolean) => void handleRumbleToggleChange(value)}
+        onRumbleIntensityChange={handleRumbleIntensityChange}
+        onTestRumble={() => void handleTestRumble()}
+      />
+      <GlyphFixPanel
+        activeGame={activeGame}
+        inputplumberAvailable={settings.inputplumberAvailable}
+        isMissingGlyphFixEnabled={isMissingGlyphFixEnabled}
+        isMissingGlyphFixActive={isMissingGlyphFixActive}
+        isTrackpadsDisabled={isTrackpadsDisabled}
+        savingMissingGlyphFix={savingMissingGlyphFix}
+        savingMissingGlyphFixTrackpads={savingMissingGlyphFixTrackpads}
+        shouldShowSteamInputDisabledWarning={shouldShowSteamInputDisabledWarning}
+        onMissingGlyphFixToggleChange={(value: boolean) => void handleMissingGlyphFixToggleChange(value)}
+        onMissingGlyphFixTrackpadsChange={(value: boolean) => void handleMissingGlyphFixTrackpadsChange(value)}
+      />
     </PanelSection>
   )
 }

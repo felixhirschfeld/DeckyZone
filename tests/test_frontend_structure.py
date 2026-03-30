@@ -37,23 +37,52 @@ class FrontendStructureTests(unittest.TestCase):
         self.assertNotIn("PanelSection", boundary_source)
         self.assertNotIn("PanelSectionRow", boundary_source)
 
-    def test_controller_panel_keeps_core_controls_and_rpc_wiring(self):
+    def test_controller_panel_composes_controller_sub_panels_and_keeps_orchestration(self):
         controller_path = REPO_ROOT.joinpath("src", "components", "ControllerPanel.tsx")
         self.assertTrue(controller_path.exists())
         controller_source = controller_path.read_text()
 
+        self.assertIn("./controller/ControllerTogglesPanel", controller_source)
+        self.assertIn("./controller/RumblePanel", controller_source)
+        self.assertIn("./controller/GlyphFixPanel", controller_source)
         self.assertIn('title="Controller"', controller_source)
-        self.assertIn('Enable Controller', controller_source)
-        self.assertIn('Enable Home Button', controller_source)
-        self.assertIn('Enable Brightness Dial', controller_source)
-        self.assertIn('Vibration / Rumble', controller_source)
-        self.assertIn('Button Prompt Fix', controller_source)
         self.assertIn('set_home_button_enabled', controller_source)
         self.assertIn('set_brightness_dial_fix_enabled', controller_source)
         self.assertIn('set_missing_glyph_fix_enabled', controller_source)
         self.assertIn('test_rumble', controller_source)
-        self.assertIn('Launch a game to enable this fix.', controller_source)
-        self.assertIn('Turns off the trackpads while this fix is on.', controller_source)
+        self.assertIn("<ControllerTogglesPanel", controller_source)
+        self.assertIn("<RumblePanel", controller_source)
+        self.assertIn("<GlyphFixPanel", controller_source)
+
+    def test_controller_toggles_panel_keeps_controller_copy(self):
+        toggles_path = REPO_ROOT.joinpath("src", "components", "controller", "ControllerTogglesPanel.tsx")
+        self.assertTrue(toggles_path.exists())
+        toggles_source = toggles_path.read_text()
+
+        self.assertIn('Enable Controller', toggles_source)
+        self.assertIn('Enable Home Button', toggles_source)
+        self.assertIn('Enable Brightness Dial', toggles_source)
+        self.assertIn('InputPlumber is not available.', toggles_source)
+
+    def test_rumble_panel_keeps_rumble_controls_and_copy(self):
+        rumble_path = REPO_ROOT.joinpath("src", "components", "controller", "RumblePanel.tsx")
+        self.assertTrue(rumble_path.exists())
+        rumble_source = rumble_path.read_text()
+
+        self.assertIn('Vibration / Rumble', rumble_source)
+        self.assertIn('Testing Rumble...', rumble_source)
+        self.assertIn('Test  ${rumbleIntensityDraft}% Rumble', rumble_source)
+
+    def test_glyph_fix_panel_keeps_glyph_fix_copy(self):
+        glyph_fix_path = REPO_ROOT.joinpath("src", "components", "controller", "GlyphFixPanel.tsx")
+        self.assertTrue(glyph_fix_path.exists())
+        glyph_fix_source = glyph_fix_path.read_text()
+
+        self.assertIn('Button Prompt Fix', glyph_fix_source)
+        self.assertIn('Launch a game to enable this fix.', glyph_fix_source)
+        self.assertIn('Disable Trackpads', glyph_fix_source)
+        self.assertIn('Turns off the trackpads while this fix is on.', glyph_fix_source)
+        self.assertIn('Steam Input disabled', glyph_fix_source)
 
     def test_updates_panel_keeps_update_actions_and_status_copy(self):
         updates_path = REPO_ROOT.joinpath("src", "components", "UpdatesPanel.tsx")
