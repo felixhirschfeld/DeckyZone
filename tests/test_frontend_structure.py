@@ -1,0 +1,98 @@
+import unittest
+
+from .support import REPO_ROOT
+
+
+class FrontendStructureTests(unittest.TestCase):
+    def test_index_wires_bootstrap_and_top_level_panels(self):
+        index_source = REPO_ROOT.joinpath("src", "index.tsx").read_text()
+
+        self.assertIn('import ControllerPanel from "./components/ControllerPanel"', index_source)
+        self.assertIn('import DisplayPanel from "./components/DisplayPanel"', index_source)
+        self.assertIn('import UpdatesPanel from "./components/UpdatesPanel"', index_source)
+        self.assertIn('import ErrorBoundary from "./components/ErrorBoundary"', index_source)
+        self.assertIn("type BootstrapState =", index_source)
+        self.assertIn("Promise.all([getStatus(), getSettings()])", index_source)
+        self.assertIn("if (bootstrap.state === 'loading')", index_source)
+        self.assertIn("if (bootstrap.state === 'error')", index_source)
+        self.assertIn('<ErrorBoundary title="Controller">', index_source)
+        self.assertIn('<ErrorBoundary title="Display">', index_source)
+        self.assertIn('<ErrorBoundary title="Updates">', index_source)
+        self.assertIn("<ControllerPanel", index_source)
+        self.assertIn("<DisplayPanel", index_source)
+        self.assertIn("<UpdatesPanel", index_source)
+
+    def test_error_boundary_exposes_panel_fallback(self):
+        boundary_path = REPO_ROOT.joinpath("src", "components", "ErrorBoundary.tsx")
+        self.assertTrue(boundary_path.exists())
+        boundary_source = boundary_path.read_text()
+
+        self.assertIn("getDerivedStateFromError", boundary_source)
+        self.assertIn("componentDidCatch", boundary_source)
+        self.assertIn('title: string', boundary_source)
+        self.assertIn("console.error", boundary_source)
+        self.assertIn("Failed to render this panel.", boundary_source)
+
+    def test_controller_panel_keeps_core_controls_and_rpc_wiring(self):
+        controller_path = REPO_ROOT.joinpath("src", "components", "ControllerPanel.tsx")
+        self.assertTrue(controller_path.exists())
+        controller_source = controller_path.read_text()
+
+        self.assertIn('title="Controller"', controller_source)
+        self.assertIn('Enable Controller', controller_source)
+        self.assertIn('Enable Home Button', controller_source)
+        self.assertIn('Enable Brightness Dial', controller_source)
+        self.assertIn('Vibration / Rumble', controller_source)
+        self.assertIn('Button Prompt Fix', controller_source)
+        self.assertIn('set_home_button_enabled', controller_source)
+        self.assertIn('set_brightness_dial_fix_enabled', controller_source)
+        self.assertIn('set_missing_glyph_fix_enabled', controller_source)
+        self.assertIn('test_rumble', controller_source)
+        self.assertIn('Launch a game to enable this fix.', controller_source)
+        self.assertIn('Turns off the trackpads while this fix is on.', controller_source)
+
+    def test_updates_panel_keeps_update_actions_and_status_copy(self):
+        updates_path = REPO_ROOT.joinpath("src", "components", "UpdatesPanel.tsx")
+        self.assertTrue(updates_path.exists())
+        updates_source = updates_path.read_text()
+
+        self.assertIn('title="Updates"', updates_source)
+        self.assertIn("getLatestVersionNum", updates_source)
+        self.assertIn("otaUpdate", updates_source)
+        self.assertIn("Installed Version", updates_source)
+        self.assertIn("Latest Version", updates_source)
+        self.assertIn("Update to", updates_source)
+        self.assertIn("Reinstall Plugin", updates_source)
+        self.assertIn("Retry", updates_source)
+        self.assertIn("Failed to fetch the latest version.", updates_source)
+        self.assertIn("Failed to update DeckyZone.", updates_source)
+
+    def test_display_panel_keeps_gamescope_wiring_and_warning_copy(self):
+        display_path = REPO_ROOT.joinpath("src", "components", "DisplayPanel.tsx")
+        plugin_types_path = REPO_ROOT.joinpath("src", "pluginTypes.ts")
+        helper_path = REPO_ROOT.joinpath("py_modules", "gamescope_display_profiles.py")
+
+        self.assertTrue(display_path.exists())
+        self.assertTrue(plugin_types_path.exists())
+        self.assertTrue(helper_path.exists())
+
+        display_source = display_path.read_text()
+        plugin_types_source = plugin_types_path.read_text()
+        helper_source = helper_path.read_text()
+
+        self.assertIn('title="Display"', display_source)
+        self.assertIn('Enable Zotac OLED Profile', display_source)
+        self.assertIn('Enable Green Tint Fix', display_source)
+        self.assertIn('gamescopeZotacProfileTargetPath', display_source)
+        self.assertIn('gamescopeZotacProfileVerificationState', display_source)
+        self.assertIn('set_gamescope_zotac_profile_enabled', display_source)
+        self.assertIn('set_gamescope_green_tint_fix_enabled', display_source)
+        self.assertIn('Managed file:', display_source)
+        self.assertIn('Unable to read or migrate the managed display profile state:', display_source)
+        self.assertIn('Settings -> Display -> Use Native Color Temperature', display_source)
+        self.assertIn('gamescopeZotacProfileTargetPath', plugin_types_source)
+        self.assertIn('gamescopeZotacProfileVerificationState', plugin_types_source)
+        self.assertIn('class GamescopeDisplayProfiles', helper_source)
+        self.assertIn('zotac.zone.oled.lua', helper_source)
+        self.assertTrue(REPO_ROOT.joinpath("assets", "gamescope", "zotac.zone.oled.lua").exists())
+        self.assertTrue(REPO_ROOT.joinpath("assets", "gamescope", "zotac.zone.green-tint.lua").exists())
