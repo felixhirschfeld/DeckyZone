@@ -1,9 +1,9 @@
-import { PanelSection, PanelSectionRow } from '@decky/ui'
+import { Field } from '@decky/ui'
 import { Component } from 'react'
 import type { ErrorInfo, ReactNode } from 'react'
 
 type Props = {
-  title: string
+  title?: string
   children: ReactNode
 }
 
@@ -14,22 +14,23 @@ type State = {
 class ErrorBoundary extends Component<Props, State> {
   state: State = { hasError: false }
 
-  static getDerivedStateFromError() {
+  static getDerivedStateFromError(error: Error) {
+    console.log(error)
     return { hasError: true }
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error(`Failed to render panel "${this.props.title}"`, error, errorInfo)
+    console.log(error, errorInfo)
   }
 
   render() {
     if (this.state.hasError) {
       return (
-        <PanelSection title={this.props.title}>
-          <PanelSectionRow>
-            <div>Failed to render this panel.</div>
-          </PanelSectionRow>
-        </PanelSection>
+        <Field disabled label="Error">
+          {this.props.title
+            ? `Error while trying to render ${this.props.title}`
+            : 'Error while trying to render this panel'}
+        </Field>
       )
     }
 

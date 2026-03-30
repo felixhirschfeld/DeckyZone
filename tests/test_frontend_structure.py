@@ -22,16 +22,20 @@ class FrontendStructureTests(unittest.TestCase):
         self.assertIn("<DisplayPanel", index_source)
         self.assertIn("<UpdatesPanel", index_source)
 
-    def test_error_boundary_exposes_panel_fallback(self):
+    def test_error_boundary_exposes_field_fallback(self):
         boundary_path = REPO_ROOT.joinpath("src", "components", "ErrorBoundary.tsx")
         self.assertTrue(boundary_path.exists())
         boundary_source = boundary_path.read_text()
 
         self.assertIn("getDerivedStateFromError", boundary_source)
         self.assertIn("componentDidCatch", boundary_source)
-        self.assertIn('title: string', boundary_source)
-        self.assertIn("console.error", boundary_source)
-        self.assertIn("Failed to render this panel.", boundary_source)
+        self.assertIn('title?: string', boundary_source)
+        self.assertIn("console.log", boundary_source)
+        self.assertIn("Field", boundary_source)
+        self.assertIn('label="Error"', boundary_source)
+        self.assertIn("Error while trying to render", boundary_source)
+        self.assertNotIn("PanelSection", boundary_source)
+        self.assertNotIn("PanelSectionRow", boundary_source)
 
     def test_controller_panel_keeps_core_controls_and_rpc_wiring(self):
         controller_path = REPO_ROOT.joinpath("src", "components", "ControllerPanel.tsx")
