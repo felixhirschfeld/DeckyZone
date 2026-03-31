@@ -11,6 +11,7 @@ class FrontendStructureTests(unittest.TestCase):
         self.assertIn('import DisplayPanel from "./components/DisplayPanel"', index_source)
         self.assertIn('import UpdatesPanel from "./components/UpdatesPanel"', index_source)
         self.assertIn('import ErrorBoundary from "./components/ErrorBoundary"', index_source)
+        self.assertIn('from "./types/plugin"', index_source)
         self.assertIn("type BootstrapState =", index_source)
         self.assertIn("Promise.all([getStatus(), getSettings()])", index_source)
         self.assertIn("if (bootstrap.state === 'loading')", index_source)
@@ -42,6 +43,7 @@ class FrontendStructureTests(unittest.TestCase):
         self.assertTrue(controller_path.exists())
         controller_source = controller_path.read_text()
 
+        self.assertIn("../types/plugin", controller_source)
         self.assertIn("./controller/ControllerTogglesPanel", controller_source)
         self.assertIn("./controller/RumblePanel", controller_source)
         self.assertIn("./controller/GlyphFixPanel", controller_source)
@@ -102,17 +104,20 @@ class FrontendStructureTests(unittest.TestCase):
 
     def test_display_panel_keeps_gamescope_wiring_and_warning_copy(self):
         display_path = REPO_ROOT.joinpath("src", "components", "DisplayPanel.tsx")
-        plugin_types_path = REPO_ROOT.joinpath("src", "pluginTypes.ts")
+        plugin_types_path = REPO_ROOT.joinpath("src", "types", "plugin.ts")
+        legacy_plugin_types_path = REPO_ROOT.joinpath("src", "pluginTypes.ts")
         helper_path = REPO_ROOT.joinpath("py_modules", "gamescope_display_profiles.py")
 
         self.assertTrue(display_path.exists())
         self.assertTrue(plugin_types_path.exists())
+        self.assertFalse(legacy_plugin_types_path.exists())
         self.assertTrue(helper_path.exists())
 
         display_source = display_path.read_text()
         plugin_types_source = plugin_types_path.read_text()
         helper_source = helper_path.read_text()
 
+        self.assertIn("../types/plugin", display_source)
         self.assertIn('title="Display"', display_source)
         self.assertIn('Enable Zotac OLED Profile', display_source)
         self.assertIn('Enable Green Tint Fix', display_source)

@@ -13,7 +13,7 @@ import ControllerPanel from "./components/ControllerPanel"
 import DisplayPanel from "./components/DisplayPanel"
 import ErrorBoundary from "./components/ErrorBoundary"
 import UpdatesPanel from "./components/UpdatesPanel"
-import type { ActiveGame, PluginSettings, PluginStatus } from "./pluginTypes"
+import type { ActiveGame, PluginSettings, PluginStatus } from "./types/plugin"
 
 type BrightnessDialDirection = 'up' | 'down'
 type ActiveGameChangedHandler = (newGame: ActiveGame | null, oldGame: ActiveGame | null) => void

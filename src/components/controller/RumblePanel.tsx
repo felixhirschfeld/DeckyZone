@@ -1,5 +1,5 @@
 import { ButtonItem, PanelSectionRow, SliderField, ToggleField } from '@decky/ui'
-import type { PluginSettings } from '../../pluginTypes'
+import type { PluginSettings } from '../../types/plugin'
 
 type Props = {
   settings: PluginSettings

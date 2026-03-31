@@ -1,7 +1,7 @@
 import { callable } from '@decky/api'
 import { PanelSection, PanelSectionRow, ToggleField, gamepadDialogClasses } from '@decky/ui'
 import { useState } from 'react'
-import type { PluginSettings, PluginStatus } from '../pluginTypes'
+import type { PluginSettings, PluginStatus } from '../types/plugin'
 
 type Props = {
   settings: PluginSettings

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import ControllerTogglesPanel from './controller/ControllerTogglesPanel'
 import GlyphFixPanel from './controller/GlyphFixPanel'
 import RumblePanel from './controller/RumblePanel'
-import type { ActiveGame, PluginSettings, PluginStatus } from '../pluginTypes'
+import type { ActiveGame, PluginSettings, PluginStatus } from '../types/plugin'
 
 type SteamInputDiagnosticAppDetails = {
   bShowControllerConfig?: boolean

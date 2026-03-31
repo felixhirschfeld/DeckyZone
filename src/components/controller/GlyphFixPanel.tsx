@@ -1,6 +1,6 @@
 import { PanelSectionRow, ToggleField, gamepadDialogClasses } from '@decky/ui'
 import type { ReactNode } from 'react'
-import type { ActiveGame } from '../../pluginTypes'
+import type { ActiveGame } from '../../types/plugin'
 
 type Props = {
   activeGame: ActiveGame | null

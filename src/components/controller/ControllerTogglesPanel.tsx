@@ -1,5 +1,5 @@
 import { PanelSectionRow, ToggleField } from '@decky/ui'
-import type { PluginSettings, PluginStatus } from '../../pluginTypes'
+import type { PluginSettings, PluginStatus } from '../../types/plugin'
 
 type Props = {
   status: PluginStatus
