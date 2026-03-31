@@ -19,6 +19,23 @@ gamescope_display_profiles = gamescope_display_profiles_module
 
 SUPPORTED_BOARDS = {"G0A1W", "G1A1W"}
 INPUTPLUMBER_DBUS_PATH = "/org/shadowblip/InputPlumber/CompositeDevice0"
+DMI_SYS_VENDOR_PATH = "/sys/devices/virtual/dmi/id/sys_vendor"
+DMI_PRODUCT_NAME_PATH = "/sys/devices/virtual/dmi/id/product_name"
+DMI_BOARD_NAME_PATH = "/sys/devices/virtual/dmi/id/board_name"
+DMI_BOARD_VENDOR_PATH = "/sys/devices/virtual/dmi/id/board_vendor"
+DMI_PATHS = (
+    DMI_SYS_VENDOR_PATH,
+    DMI_PRODUCT_NAME_PATH,
+    DMI_BOARD_NAME_PATH,
+    DMI_BOARD_VENDOR_PATH,
+)
+OS_RELEASE_CANDIDATE_PATHS = ("/etc/os-release", "/usr/lib/os-release")
+ZOTAC_ZONE_PLATFORM_MODULE_PATH = "/sys/module/zotac_zone_platform"
+ZOTAC_ZONE_HID_MODULE_PATH = "/sys/module/zotac_zone_hid"
+FIRMWARE_ATTRIBUTES_CLASS_MODULE_PATH = "/sys/module/firmware_attributes_class"
+FIRMWARE_ATTRIBUTES_NODE_PATH = "/sys/class/firmware-attributes/zotac_zone_platform"
+ZOTAC_HID_CONFIG_SEARCH_ROOT = "/sys/class/hidraw/hidraw*/device"
+ZOTAC_HID_CONFIG_MATCH_MARKER = "save_config"
 DBUS_READY_MESSAGE = "Waiting to apply startup mode."
 UNSUPPORTED_MESSAGE = "Unsupported device: startup mode only applies on Zotac Zone."
 DISABLED_MESSAGE = "Startup mode apply is disabled."
@@ -166,6 +183,74 @@ class DeckyZoneService:
         self._rumble_available = bool(self.probe_rumble_available())
         return self._current_settings()
 
+    def get_support_snapshot(self):
+        status = self.get_status()
+        inputplumber_available = bool(self.probe_inputplumber_available())
+        profile_name = None
+        profile_path = None
+        display_profile_settings = self._get_display_profile_settings()
+        gamescope_paths = self._get_gamescope_support_paths()
+
+        if inputplumber_available:
+            try:
+                profile_name = self._get_inputplumber_profile_name() or None
+            except Exception:
+                profile_name = None
+
+            try:
+                profile_path = self._get_inputplumber_profile_path() or None
+            except Exception:
+                profile_path = None
+
+        return {
+            "deviceIdentity": {
+                "vendorName": self._read_optional_text(DMI_SYS_VENDOR_PATH),
+                "productName": self._read_optional_text(DMI_PRODUCT_NAME_PATH),
+                "boardName": self._read_optional_text(DMI_BOARD_NAME_PATH),
+                "boardVendor": self._read_optional_text(DMI_BOARD_VENDOR_PATH),
+                "supportedDevice": self.is_supported_device(),
+                "dmiPaths": list(DMI_PATHS),
+            },
+            "osContext": {
+                "prettyName": self._get_os_pretty_name(),
+                "kernelRelease": self._get_kernel_release(),
+                "osReleaseCandidatePaths": list(OS_RELEASE_CANDIDATE_PATHS),
+            },
+            "inputPlumber": {
+                "available": inputplumber_available,
+                "profileName": profile_name,
+                "profilePath": profile_path,
+                "compositeDeviceObjectPath": INPUTPLUMBER_DBUS_PATH,
+            },
+            "zotacZoneKernelDrivers": {
+                "zotacZonePlatformLoaded": self._path_exists(ZOTAC_ZONE_PLATFORM_MODULE_PATH),
+                "zotacZonePlatformPath": ZOTAC_ZONE_PLATFORM_MODULE_PATH,
+                "zotacZoneHidLoaded": self._path_exists(ZOTAC_ZONE_HID_MODULE_PATH),
+                "zotacZoneHidPath": ZOTAC_ZONE_HID_MODULE_PATH,
+                "firmwareAttributesClassLoaded": self._path_exists(
+                    FIRMWARE_ATTRIBUTES_CLASS_MODULE_PATH
+                ),
+                "firmwareAttributesClassPath": FIRMWARE_ATTRIBUTES_CLASS_MODULE_PATH,
+                "firmwareAttributesNodePresent": self._path_exists(
+                    FIRMWARE_ATTRIBUTES_NODE_PATH
+                ),
+                "firmwareAttributesNodePath": FIRMWARE_ATTRIBUTES_NODE_PATH,
+                "hidConfigNodePath": self._resolve_zotac_hid_config_path(),
+                "hidConfigSearchRoot": ZOTAC_HID_CONFIG_SEARCH_ROOT,
+                "hidConfigMatchMarker": ZOTAC_HID_CONFIG_MATCH_MARKER,
+            },
+            "gamescope": {
+                "builtInAvailable": bool(display_profile_settings["gamescopeZotacProfileBuiltIn"]),
+                "managedProfileInstalled": bool(display_profile_settings["gamescopeZotacProfileInstalled"]),
+                "greenTintFixEnabled": bool(display_profile_settings["gamescopeGreenTintFixEnabled"]),
+                "verificationState": display_profile_settings["gamescopeZotacProfileVerificationState"],
+                **gamescope_paths,
+            },
+            "deckyZoneStatus": {
+                "message": status["message"],
+            },
+        }
+
     async def get_latest_version_num(self):
         try:
             return plugin_update.get_latest_version()
@@ -187,12 +272,49 @@ class DeckyZoneService:
         with open(path, "r", encoding="utf-8") as handle:
             return handle.read().strip()
 
-    def _current_settings(self):
+    def _read_optional_text(self, path):
         try:
-            display_profile_settings = self.gamescope_display_profiles.get_state()
+            value = self.read_text(path)
+        except Exception:
+            return None
+        return value or None
+
+    def _path_exists(self, path):
+        return Path(path).exists()
+
+    def _get_kernel_release(self):
+        try:
+            return os.uname().release
+        except Exception:
+            return None
+
+    def _get_os_pretty_name(self):
+        for candidate_path in OS_RELEASE_CANDIDATE_PATHS:
+            content = self._read_optional_text(candidate_path)
+            if not content:
+                continue
+
+            for line in content.splitlines():
+                if not line.startswith("PRETTY_NAME="):
+                    continue
+
+                value = line.split("=", 1)[1].strip()
+                if (
+                    len(value) >= 2
+                    and value[0] == value[-1]
+                    and value[0] in {'"', "'"}
+                ):
+                    value = value[1:-1]
+                return value or None
+
+        return None
+
+    def _get_display_profile_settings(self):
+        try:
+            return self.gamescope_display_profiles.get_state()
         except Exception as error:
             self.logger.warning(f"Failed to read Gamescope display profile state: {error}")
-            display_profile_settings = {
+            return {
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
@@ -205,6 +327,83 @@ class DeckyZoneService:
                 ),
                 "gamescopeZotacProfileVerificationState": "error",
             }
+
+    def _get_gamescope_support_path(self, attribute_name, fallback):
+        try:
+            return str(getattr(self.gamescope_display_profiles, attribute_name))
+        except Exception:
+            return fallback
+
+    def _get_gamescope_support_paths(self):
+        try:
+            built_in_candidate_paths = [
+                str(path)
+                for path in self.gamescope_display_profiles.system_profile_paths
+            ]
+        except Exception:
+            built_in_candidate_paths = [
+                str(path)
+                for path in gamescope_display_profiles_module.DEFAULT_SYSTEM_PROFILE_PATHS
+            ]
+
+        return {
+            "builtInCandidatePaths": built_in_candidate_paths,
+            "managedProfilePath": self._get_gamescope_support_path(
+                "managed_profile_path",
+                str(
+                    Path(decky.DECKY_USER_HOME)
+                    / ".config"
+                    / "gamescope"
+                    / "scripts"
+                    / "zotac.zone.oled.lua"
+                ),
+            ),
+            "legacyManagedBaseProfilePath": self._get_gamescope_support_path(
+                "legacy_managed_base_profile_path",
+                str(
+                    Path(decky.DECKY_USER_HOME)
+                    / ".config"
+                    / "gamescope"
+                    / "scripts"
+                    / "90-deckyzone"
+                    / "displays"
+                    / "10-zotac-zone-oled.lua"
+                ),
+            ),
+            "legacyManagedGreenTintProfilePath": self._get_gamescope_support_path(
+                "legacy_managed_green_tint_profile_path",
+                str(
+                    Path(decky.DECKY_USER_HOME)
+                    / ".config"
+                    / "gamescope"
+                    / "scripts"
+                    / "90-deckyzone"
+                    / "displays"
+                    / "20-zotac-zone-green-tint.lua"
+                ),
+            ),
+            "assetBaseProfilePath": str(
+                Path(
+                    self._get_gamescope_support_path(
+                        "assets_dir",
+                        str(Path(decky.DECKY_PLUGIN_DIR) / "assets" / "gamescope"),
+                    )
+                )
+                / "zotac.zone.oled.lua"
+            ),
+            "assetGreenTintProfilePath": str(
+                Path(
+                    self._get_gamescope_support_path(
+                        "assets_dir",
+                        str(Path(decky.DECKY_PLUGIN_DIR) / "assets" / "gamescope"),
+                    )
+                )
+                / "zotac.zone.green-tint.lua"
+            ),
+        }
+
+    def _current_settings(self):
+        display_profile_settings = self._get_display_profile_settings()
         return {
             "startupApplyEnabled": self.settings_store.get_startup_apply_enabled(),
             "homeButtonEnabled": self.settings_store.get_home_button_enabled(),
@@ -249,8 +448,8 @@ class DeckyZoneService:
 
     def is_supported_device(self):
         try:
-            vendor = self.read_text("/sys/devices/virtual/dmi/id/sys_vendor")
-            board = self.read_text("/sys/devices/virtual/dmi/id/board_name")
+            vendor = self.read_text(DMI_SYS_VENDOR_PATH)
+            board = self.read_text(DMI_BOARD_NAME_PATH)
         except Exception:
             return False
         return vendor == "ZOTAC" and board in SUPPORTED_BOARDS
@@ -272,6 +471,26 @@ class DeckyZoneService:
         )
         self._inputplumber_available = result.returncode == 0
         return self._inputplumber_available
+
+    def _get_inputplumber_profile_name(self):
+        result = self.command_runner(
+            self._busctl_args(
+                "get-property",
+                "org.shadowblip.InputPlumber",
+                INPUTPLUMBER_DBUS_PATH,
+                "org.shadowblip.Input.CompositeDevice",
+                "ProfileName",
+            ),
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.get_env(),
+        )
+        self._inputplumber_available = result.returncode == 0
+        if not self._inputplumber_available:
+            return ""
+        return inputplumber_target_sync.parse_busctl_string_output(result.stdout)
 
     def probe_inputplumber_available(self):
         try:
@@ -1459,6 +1678,9 @@ class Plugin:
 
     async def get_settings(self):
         return self.service.get_settings()
+
+    async def get_support_snapshot(self):
+        return self.service.get_support_snapshot()
 
     async def set_startup_apply_enabled(self, enabled):
         if not enabled and self.startup_task and not self.startup_task.done():

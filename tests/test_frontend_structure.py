@@ -11,6 +11,7 @@ class FrontendStructureTests(unittest.TestCase):
         self.assertIn('import DisplayPanel from "./components/DisplayPanel"', index_source)
         self.assertIn('import UpdatesPanel from "./components/UpdatesPanel"', index_source)
         self.assertIn('import ErrorBoundary from "./components/ErrorBoundary"', index_source)
+        self.assertIn('import QuickAccessTitleView from "./components/QuickAccessTitleView"', index_source)
         self.assertIn('from "./types/plugin"', index_source)
         self.assertIn("type BootstrapState =", index_source)
         self.assertIn("Promise.all([getStatus(), getSettings()])", index_source)
@@ -22,6 +23,43 @@ class FrontendStructureTests(unittest.TestCase):
         self.assertIn("<ControllerPanel", index_source)
         self.assertIn("<DisplayPanel", index_source)
         self.assertIn("<UpdatesPanel", index_source)
+        self.assertIn("titleView: <QuickAccessTitleView", index_source)
+
+    def test_quick_access_title_view_opens_support_snapshot_modal(self):
+        header_path = REPO_ROOT.joinpath("src", "components", "QuickAccessTitleView.tsx")
+        self.assertTrue(header_path.exists())
+        header_source = header_path.read_text()
+
+        self.assertIn("DialogButton", header_source)
+        self.assertIn("showModal", header_source)
+        self.assertIn("quickAccessMenuClasses", header_source)
+        self.assertIn("FaInfoCircle", header_source)
+        self.assertIn("SupportSnapshotModal", header_source)
+
+    def test_support_snapshot_modal_fetches_support_snapshot_and_renders_sections(self):
+        modal_path = REPO_ROOT.joinpath("src", "components", "SupportSnapshotModal.tsx")
+        self.assertTrue(modal_path.exists())
+        modal_source = modal_path.read_text()
+
+        self.assertIn("get_support_snapshot", modal_source)
+        self.assertIn("Device Identity", modal_source)
+        self.assertIn("OS Context", modal_source)
+        self.assertIn("InputPlumber", modal_source)
+        self.assertIn("Zotac Zone Kernel Drivers", modal_source)
+        self.assertIn("Gamescope", modal_source)
+        self.assertIn("DeckyZone Status", modal_source)
+        self.assertIn("Reload", modal_source)
+        self.assertIn("Unavailable", modal_source)
+        self.assertIn("<Field label={label} highlightOnFocus={false}>", modal_source)
+        self.assertNotIn('childrenLayout="below"', modal_source)
+        self.assertIn("gamepadDialogClasses.FieldDescription", modal_source)
+        self.assertIn("hidConfigSearchRoot", modal_source)
+        self.assertIn("hidConfigMatchMarker", modal_source)
+        self.assertNotIn("OpenZone Driver Stack", modal_source)
+        self.assertNotIn("DeckyZone Runtime", modal_source)
+        self.assertNotIn("Plugin Version", modal_source)
+        self.assertNotIn("Rumble Available", modal_source)
+        self.assertNotIn("Status State", modal_source)
 
     def test_error_boundary_exposes_field_fallback(self):
         boundary_path = REPO_ROOT.joinpath("src", "components", "ErrorBoundary.tsx")

@@ -3,7 +3,6 @@ import {
   PanelSection,
   PanelSectionRow,
   Router,
-  staticClasses,
   SteamSpinner,
 } from '@decky/ui'
 import { addEventListener, callable, definePlugin, removeEventListener } from '@decky/api'
@@ -12,6 +11,7 @@ import { FaSlidersH } from 'react-icons/fa'
 import ControllerPanel from "./components/ControllerPanel"
 import DisplayPanel from "./components/DisplayPanel"
 import ErrorBoundary from "./components/ErrorBoundary"
+import QuickAccessTitleView from "./components/QuickAccessTitleView"
 import UpdatesPanel from "./components/UpdatesPanel"
 import type { ActiveGame, PluginSettings, PluginStatus } from "./types/plugin"
 
@@ -402,7 +402,7 @@ export default definePlugin(() => {
 
   return {
     name: 'DeckyZone',
-    titleView: <div className={staticClasses.Title}>DeckyZone</div>,
+    titleView: <QuickAccessTitleView title="DeckyZone" />,
     content: <Content />,
     icon: <FaSlidersH />,
     onDismount() {

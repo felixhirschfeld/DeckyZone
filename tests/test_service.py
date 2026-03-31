@@ -378,6 +378,233 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
+    async def test_get_support_snapshot_returns_support_relevant_runtime_facts(self):
+        gamescope_state = {
+            "gamescopeZotacProfileBuiltIn": True,
+            "gamescopeZotacProfileInstalled": True,
+            "gamescopeGreenTintFixEnabled": False,
+            "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+            "gamescopeZotacProfileVerificationState": "built-in",
+        }
+
+        def read_text(path):
+            values = {
+                "sys_vendor": "ZOTAC",
+                "product_name": "ZOTAC GAMING ZONE",
+                "board_name": "G0A1W",
+                "board_vendor": "PC Partner Limited",
+                "os-release": 'PRETTY_NAME="Bazzite"',
+            }
+            name = Path(path).name
+            if name not in values:
+                raise FileNotFoundError(path)
+            return values[name]
+
+        class GamescopeProfiles:
+            system_profile_paths = (
+                Path("/usr/share/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua"),
+                Path("/etc/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua"),
+            )
+            managed_profile_path = Path("/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua")
+            legacy_managed_base_profile_path = Path(
+                "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/10-zotac-zone-oled.lua"
+            )
+            legacy_managed_green_tint_profile_path = Path(
+                "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/20-zotac-zone-green-tint.lua"
+            )
+            assets_dir = Path("/tmp/plugin/assets/gamescope")
+
+            def get_state(self):
+                return dict(gamescope_state)
+
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=read_text,
+            gamescope_display_profiles=GamescopeProfiles(),
+        )
+        service.probe_inputplumber_available = lambda: True
+        service._get_inputplumber_profile_name = lambda: "default"
+        service._get_inputplumber_profile_path = (
+            lambda: "/usr/share/inputplumber/profiles/default.yaml"
+        )
+        service._resolve_zotac_hid_config_path = lambda: "/sys/class/hidraw/hidraw0/device"
+        service._path_exists = lambda path: path in {
+            "/sys/module/zotac_zone_platform",
+            "/sys/module/zotac_zone_hid",
+            "/sys/module/firmware_attributes_class",
+            "/sys/class/firmware-attributes/zotac_zone_platform",
+        }
+        service._get_kernel_release = lambda: "6.14.0-test"
+        service._set_status("ready", "Startup mode applied.")
+
+        snapshot = service.get_support_snapshot()
+
+        self.assertEqual(
+            snapshot,
+            {
+                "deviceIdentity": {
+                    "vendorName": "ZOTAC",
+                    "productName": "ZOTAC GAMING ZONE",
+                    "boardName": "G0A1W",
+                    "boardVendor": "PC Partner Limited",
+                    "supportedDevice": True,
+                    "dmiPaths": [
+                        "/sys/devices/virtual/dmi/id/sys_vendor",
+                        "/sys/devices/virtual/dmi/id/product_name",
+                        "/sys/devices/virtual/dmi/id/board_name",
+                        "/sys/devices/virtual/dmi/id/board_vendor",
+                    ],
+                },
+                "osContext": {
+                    "prettyName": "Bazzite",
+                    "kernelRelease": "6.14.0-test",
+                    "osReleaseCandidatePaths": [
+                        "/etc/os-release",
+                        "/usr/lib/os-release",
+                    ],
+                },
+                "inputPlumber": {
+                    "available": True,
+                    "profileName": "default",
+                    "profilePath": "/usr/share/inputplumber/profiles/default.yaml",
+                    "compositeDeviceObjectPath": main.INPUTPLUMBER_DBUS_PATH,
+                },
+                "zotacZoneKernelDrivers": {
+                    "zotacZonePlatformLoaded": True,
+                    "zotacZonePlatformPath": "/sys/module/zotac_zone_platform",
+                    "zotacZoneHidLoaded": True,
+                    "zotacZoneHidPath": "/sys/module/zotac_zone_hid",
+                    "firmwareAttributesClassLoaded": True,
+                    "firmwareAttributesClassPath": "/sys/module/firmware_attributes_class",
+                    "firmwareAttributesNodePresent": True,
+                    "firmwareAttributesNodePath": "/sys/class/firmware-attributes/zotac_zone_platform",
+                    "hidConfigNodePath": "/sys/class/hidraw/hidraw0/device",
+                    "hidConfigSearchRoot": "/sys/class/hidraw/hidraw*/device",
+                    "hidConfigMatchMarker": "save_config",
+                },
+                "gamescope": {
+                    "builtInAvailable": True,
+                    "managedProfileInstalled": True,
+                    "greenTintFixEnabled": False,
+                    "verificationState": "built-in",
+                    "builtInCandidatePaths": [
+                        "/usr/share/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua",
+                        "/etc/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua",
+                    ],
+                    "managedProfilePath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                    "legacyManagedBaseProfilePath": "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/10-zotac-zone-oled.lua",
+                    "legacyManagedGreenTintProfilePath": "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/20-zotac-zone-green-tint.lua",
+                    "assetBaseProfilePath": "/tmp/plugin/assets/gamescope/zotac.zone.oled.lua",
+                    "assetGreenTintProfilePath": "/tmp/plugin/assets/gamescope/zotac.zone.green-tint.lua",
+                },
+                "deckyZoneStatus": {
+                    "message": "Startup mode applied.",
+                },
+            },
+        )
+
+    async def test_get_support_snapshot_handles_missing_runtime_data(self):
+        class GamescopeProfiles:
+            system_profile_paths = (
+                Path("/usr/share/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua"),
+                Path("/etc/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua"),
+            )
+            managed_profile_path = Path("/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua")
+            legacy_managed_base_profile_path = Path(
+                "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/10-zotac-zone-oled.lua"
+            )
+            legacy_managed_green_tint_profile_path = Path(
+                "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/20-zotac-zone-green-tint.lua"
+            )
+            assets_dir = Path("/tmp/plugin/assets/gamescope")
+
+            def get_state(self):
+                return {
+                    "gamescopeZotacProfileBuiltIn": False,
+                    "gamescopeZotacProfileInstalled": False,
+                    "gamescopeGreenTintFixEnabled": False,
+                    "gamescopeZotacProfileTargetPath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                    "gamescopeZotacProfileVerificationState": "absent",
+                }
+
+        service = main.DeckyZoneService(
+            command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
+            sleep=_async_noop,
+            read_text=lambda path: (_ for _ in ()).throw(FileNotFoundError(path)),
+            gamescope_display_profiles=GamescopeProfiles(),
+        )
+        service.probe_inputplumber_available = lambda: False
+        service._resolve_zotac_hid_config_path = lambda: None
+        service._path_exists = lambda path: False
+        service._get_kernel_release = lambda: None
+
+        snapshot = service.get_support_snapshot()
+
+        self.assertEqual(
+            snapshot,
+            {
+                "deviceIdentity": {
+                    "vendorName": None,
+                    "productName": None,
+                    "boardName": None,
+                    "boardVendor": None,
+                    "supportedDevice": False,
+                    "dmiPaths": [
+                        "/sys/devices/virtual/dmi/id/sys_vendor",
+                        "/sys/devices/virtual/dmi/id/product_name",
+                        "/sys/devices/virtual/dmi/id/board_name",
+                        "/sys/devices/virtual/dmi/id/board_vendor",
+                    ],
+                },
+                "osContext": {
+                    "prettyName": None,
+                    "kernelRelease": None,
+                    "osReleaseCandidatePaths": [
+                        "/etc/os-release",
+                        "/usr/lib/os-release",
+                    ],
+                },
+                "inputPlumber": {
+                    "available": False,
+                    "profileName": None,
+                    "profilePath": None,
+                    "compositeDeviceObjectPath": main.INPUTPLUMBER_DBUS_PATH,
+                },
+                "zotacZoneKernelDrivers": {
+                    "zotacZonePlatformLoaded": False,
+                    "zotacZonePlatformPath": "/sys/module/zotac_zone_platform",
+                    "zotacZoneHidLoaded": False,
+                    "zotacZoneHidPath": "/sys/module/zotac_zone_hid",
+                    "firmwareAttributesClassLoaded": False,
+                    "firmwareAttributesClassPath": "/sys/module/firmware_attributes_class",
+                    "firmwareAttributesNodePresent": False,
+                    "firmwareAttributesNodePath": "/sys/class/firmware-attributes/zotac_zone_platform",
+                    "hidConfigNodePath": None,
+                    "hidConfigSearchRoot": "/sys/class/hidraw/hidraw*/device",
+                    "hidConfigMatchMarker": "save_config",
+                },
+                "gamescope": {
+                    "builtInAvailable": False,
+                    "managedProfileInstalled": False,
+                    "greenTintFixEnabled": False,
+                    "verificationState": "absent",
+                    "builtInCandidatePaths": [
+                        "/usr/share/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua",
+                        "/etc/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua",
+                    ],
+                    "managedProfilePath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
+                    "legacyManagedBaseProfilePath": "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/10-zotac-zone-oled.lua",
+                    "legacyManagedGreenTintProfilePath": "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/20-zotac-zone-green-tint.lua",
+                    "assetBaseProfilePath": "/tmp/plugin/assets/gamescope/zotac.zone.oled.lua",
+                    "assetGreenTintProfilePath": "/tmp/plugin/assets/gamescope/zotac.zone.green-tint.lua",
+                },
+                "deckyZoneStatus": {
+                    "message": "Waiting to apply startup mode.",
+                },
+            },
+        )
+
     async def test_get_latest_version_num_delegates_to_plugin_update_helper(self):
         service = main.DeckyZoneService(
             command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
