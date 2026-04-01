@@ -3,7 +3,7 @@ export type PluginStatus = {
   message: string
 }
 
-export type SupportSnapshot = {
+export type DebugInfoSnapshot = {
   deviceIdentity: {
     vendorName: string | null
     productName: string | null
@@ -43,17 +43,15 @@ export type SupportSnapshot = {
     verificationState: string
     builtInCandidatePaths: string[]
     managedProfilePath: string
-    legacyManagedBaseProfilePath: string
-    legacyManagedGreenTintProfilePath: string
-    assetBaseProfilePath: string
-    assetGreenTintProfilePath: string
   }
   deckyZoneStatus: {
     message: string
   }
 }
 
-export type MissingGlyphFixGameSettings = {
+export type PerGameSettings = {
+  enabled: boolean
+  buttonPromptFixEnabled: boolean
   disableTrackpads: boolean
 }
 
@@ -80,5 +78,5 @@ export type PluginSettings = {
   rumbleEnabled: boolean
   rumbleIntensity: number
   rumbleAvailable: boolean
-  missingGlyphFixGames: Record<string, MissingGlyphFixGameSettings>
+  perGameSettings: Record<string, PerGameSettings>
 }

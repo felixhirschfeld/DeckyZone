@@ -80,6 +80,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         service._wait_for_inputplumber_target_devices = (
             lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
         )
+        main.plugin_settings.set_home_button_enabled(True)
 
         status = await service.apply_startup_mode()
 
@@ -319,7 +320,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             1,
         )
 
-    async def test_get_settings_defaults_to_enabled(self):
+    async def test_get_settings_defaults_to_disabled_controller_features(self):
         service = main.DeckyZoneService(
             command_runner=lambda *args, **kwargs: _CompletedProcess(returncode=0),
             sleep=_async_noop,
@@ -330,9 +331,9 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             service.get_settings(),
             {
-                "startupApplyEnabled": True,
-                "homeButtonEnabled": True,
-                "brightnessDialFixEnabled": True,
+                "startupApplyEnabled": False,
+                "homeButtonEnabled": False,
+                "brightnessDialFixEnabled": False,
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
@@ -340,10 +341,10 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": True,
                 "pluginVersionNum": "0.0.1-test",
-                "rumbleEnabled": True,
+                "rumbleEnabled": False,
                 "rumbleIntensity": 75,
                 "rumbleAvailable": True,
-                "missingGlyphFixGames": {},
+                "perGameSettings": {},
             },
         )
 
@@ -361,9 +362,9 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             service.get_settings(),
             {
-                "startupApplyEnabled": True,
-                "homeButtonEnabled": True,
-                "brightnessDialFixEnabled": True,
+                "startupApplyEnabled": False,
+                "homeButtonEnabled": False,
+                "brightnessDialFixEnabled": False,
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
@@ -371,14 +372,14 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": False,
                 "pluginVersionNum": "0.0.1-test",
-                "rumbleEnabled": True,
+                "rumbleEnabled": False,
                 "rumbleIntensity": 75,
                 "rumbleAvailable": False,
-                "missingGlyphFixGames": {},
+                "perGameSettings": {},
             },
         )
 
-    async def test_get_support_snapshot_returns_support_relevant_runtime_facts(self):
+    async def test_get_debug_info_returns_support_relevant_runtime_facts(self):
         gamescope_state = {
             "gamescopeZotacProfileBuiltIn": True,
             "gamescopeZotacProfileInstalled": True,
@@ -406,13 +407,6 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 Path("/etc/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua"),
             )
             managed_profile_path = Path("/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua")
-            legacy_managed_base_profile_path = Path(
-                "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/10-zotac-zone-oled.lua"
-            )
-            legacy_managed_green_tint_profile_path = Path(
-                "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/20-zotac-zone-green-tint.lua"
-            )
-            assets_dir = Path("/tmp/plugin/assets/gamescope")
 
             def get_state(self):
                 return dict(gamescope_state)
@@ -438,7 +432,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         service._get_kernel_release = lambda: "6.14.0-test"
         service._set_status("ready", "Startup mode applied.")
 
-        snapshot = service.get_support_snapshot()
+        snapshot = service.get_debug_info()
 
         self.assertEqual(
             snapshot,
@@ -493,10 +487,6 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                         "/etc/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua",
                     ],
                     "managedProfilePath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
-                    "legacyManagedBaseProfilePath": "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/10-zotac-zone-oled.lua",
-                    "legacyManagedGreenTintProfilePath": "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/20-zotac-zone-green-tint.lua",
-                    "assetBaseProfilePath": "/tmp/plugin/assets/gamescope/zotac.zone.oled.lua",
-                    "assetGreenTintProfilePath": "/tmp/plugin/assets/gamescope/zotac.zone.green-tint.lua",
                 },
                 "deckyZoneStatus": {
                     "message": "Startup mode applied.",
@@ -504,20 +494,13 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             },
         )
 
-    async def test_get_support_snapshot_handles_missing_runtime_data(self):
+    async def test_get_debug_info_handles_missing_runtime_data(self):
         class GamescopeProfiles:
             system_profile_paths = (
                 Path("/usr/share/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua"),
                 Path("/etc/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua"),
             )
             managed_profile_path = Path("/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua")
-            legacy_managed_base_profile_path = Path(
-                "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/10-zotac-zone-oled.lua"
-            )
-            legacy_managed_green_tint_profile_path = Path(
-                "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/20-zotac-zone-green-tint.lua"
-            )
-            assets_dir = Path("/tmp/plugin/assets/gamescope")
 
             def get_state(self):
                 return {
@@ -539,7 +522,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         service._path_exists = lambda path: False
         service._get_kernel_release = lambda: None
 
-        snapshot = service.get_support_snapshot()
+        snapshot = service.get_debug_info()
 
         self.assertEqual(
             snapshot,
@@ -594,10 +577,6 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                         "/etc/gamescope/scripts/00-gamescope/displays/zotac.zone.oled.lua",
                     ],
                     "managedProfilePath": "/tmp/decky-user/.config/gamescope/scripts/zotac.zone.oled.lua",
-                    "legacyManagedBaseProfilePath": "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/10-zotac-zone-oled.lua",
-                    "legacyManagedGreenTintProfilePath": "/tmp/decky-user/.config/gamescope/scripts/90-deckyzone/displays/20-zotac-zone-green-tint.lua",
-                    "assetBaseProfilePath": "/tmp/plugin/assets/gamescope/zotac.zone.oled.lua",
-                    "assetGreenTintProfilePath": "/tmp/plugin/assets/gamescope/zotac.zone.green-tint.lua",
                 },
                 "deckyZoneStatus": {
                     "message": "Waiting to apply startup mode.",
@@ -728,22 +707,26 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         main.plugin_settings.set_startup_apply_enabled(False)
         main.plugin_settings.set_home_button_enabled(False)
         main.plugin_settings.set_brightness_dial_fix_enabled(False)
-        main.plugin_settings.set_missing_glyph_fix_enabled("123", False)
-        main.plugin_settings.set_missing_glyph_fix_trackpads_disabled("123", False)
+        main.plugin_settings.set_per_game_settings_enabled("123", False)
+        main.plugin_settings.set_button_prompt_fix_enabled("123", False)
+        main.plugin_settings.set_per_game_trackpads_disabled("123", False)
 
         startup_settings = service.set_startup_apply_enabled(True)
         home_settings = await service.set_home_button_enabled(True)
         brightness_settings = await service.set_brightness_dial_fix_enabled(True)
-        glyph_settings = service.set_missing_glyph_fix_enabled("123", True)
-        trackpad_settings = service.set_missing_glyph_fix_trackpads_disabled("123", True)
+        per_game_settings = service.set_per_game_settings_enabled("123", True)
+        button_prompt_fix_settings = service.set_button_prompt_fix_enabled("123", True)
+        trackpad_settings = service.set_per_game_trackpads_disabled("123", True)
 
         self.assertFalse(startup_settings["startupApplyEnabled"])
         self.assertFalse(home_settings["homeButtonEnabled"])
         self.assertFalse(brightness_settings["brightnessDialFixEnabled"])
-        self.assertNotIn("123", glyph_settings["missingGlyphFixGames"])
-        self.assertNotIn("123", trackpad_settings["missingGlyphFixGames"])
-        self.assertFalse(main.plugin_settings.get_missing_glyph_fix_enabled("123"))
-        self.assertFalse(main.plugin_settings.get_missing_glyph_fix_trackpads_disabled("123"))
+        self.assertNotIn("123", per_game_settings["perGameSettings"])
+        self.assertNotIn("123", button_prompt_fix_settings["perGameSettings"])
+        self.assertNotIn("123", trackpad_settings["perGameSettings"])
+        self.assertFalse(main.plugin_settings.get_per_game_settings_enabled("123"))
+        self.assertFalse(main.plugin_settings.get_button_prompt_fix_enabled("123"))
+        self.assertFalse(main.plugin_settings.get_per_game_trackpads_disabled("123"))
 
     async def test_set_rumble_enabled_starts_and_stops_background_loop(self):
         calls = []
@@ -770,9 +753,9 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result,
             {
-                "startupApplyEnabled": True,
-                "homeButtonEnabled": True,
-                "brightnessDialFixEnabled": True,
+                "startupApplyEnabled": False,
+                "homeButtonEnabled": False,
+                "brightnessDialFixEnabled": False,
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
@@ -783,7 +766,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "rumbleEnabled": False,
                 "rumbleIntensity": 75,
                 "rumbleAvailable": True,
-                "missingGlyphFixGames": {},
+                "perGameSettings": {},
             },
         )
 
@@ -791,9 +774,9 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result,
             {
-                "startupApplyEnabled": True,
-                "homeButtonEnabled": True,
-                "brightnessDialFixEnabled": True,
+                "startupApplyEnabled": False,
+                "homeButtonEnabled": False,
+                "brightnessDialFixEnabled": False,
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
@@ -804,7 +787,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "rumbleEnabled": True,
                 "rumbleIntensity": 75,
                 "rumbleAvailable": True,
-                "missingGlyphFixGames": {},
+                "perGameSettings": {},
             },
         )
         self.assertEqual(calls, ["stop", "start"])
@@ -825,6 +808,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
         )
         service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
+        main.plugin_settings.set_home_button_enabled(True)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
         result = await service.sync_missing_glyph_fix_target("123")
@@ -929,6 +913,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
         )
         main.plugin_settings.set_home_button_enabled(False)
+        main.plugin_settings.set_startup_apply_enabled(True)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
         await service.sync_missing_glyph_fix_target("123")
@@ -971,6 +956,7 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
             lambda expected_count, timeout=3.0, interval=0.25: asyncio.sleep(0, result=True)
         )
         main.plugin_settings.set_home_button_enabled(False)
+        main.plugin_settings.set_startup_apply_enabled(True)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
 
         await service.sync_missing_glyph_fix_target("123")
@@ -1025,9 +1011,9 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             result,
             {
-                "startupApplyEnabled": True,
+                "startupApplyEnabled": False,
                 "homeButtonEnabled": False,
-                "brightnessDialFixEnabled": True,
+                "brightnessDialFixEnabled": False,
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
@@ -1035,10 +1021,10 @@ class DeckyZoneServiceTests(unittest.IsolatedAsyncioTestCase):
                 "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": True,
                 "pluginVersionNum": "0.0.1-test",
-                "rumbleEnabled": True,
+                "rumbleEnabled": False,
                 "rumbleIntensity": 75,
                 "rumbleAvailable": False,
-                "missingGlyphFixGames": {},
+                "perGameSettings": {},
             },
         )
 
@@ -1136,6 +1122,7 @@ mapping:
         )
         service._startup_target_active = True
         service.start_home_button_listener = lambda: listener_calls.append("start") or asyncio.sleep(0)
+        main.plugin_settings.set_home_button_enabled(True)
 
         result = await service.sync_home_button_navigation_state()
 
@@ -1403,6 +1390,7 @@ mapping:
         )
         service._resolve_rumble_device_path = lambda: "/dev/input/event15"
         service._validate_rumble_device_path = lambda path: True
+        main.plugin_settings.set_rumble_enabled(True)
 
         async def apply_gain(device_path=None):
             calls.append(("gain", device_path))
@@ -1537,6 +1525,7 @@ mapping:
         service.probe_inputplumber_available = lambda: calls.append("inputplumber") or True
         service._resolve_rumble_device_path = lambda: "/dev/input/event15"
         service._validate_rumble_device_path = lambda path: True
+        main.plugin_settings.set_rumble_enabled(True)
 
         async def apply_gain(device_path=None):
             calls.append(("gain", device_path))
@@ -1678,35 +1667,35 @@ mapping:
         self.assertEqual(calls, ["stop", "start"])
 
     async def test_plugin_settings_persist_startup_apply_enabled(self):
-        self.assertTrue(main.plugin_settings.get_startup_apply_enabled())
-        self.assertFalse(main.plugin_settings.set_startup_apply_enabled(False))
         self.assertFalse(main.plugin_settings.get_startup_apply_enabled())
+        self.assertTrue(main.plugin_settings.set_startup_apply_enabled(True))
+        self.assertTrue(main.plugin_settings.get_startup_apply_enabled())
 
     async def test_plugin_settings_persist_rumble_values(self):
-        self.assertTrue(main.plugin_settings.get_rumble_enabled())
+        self.assertFalse(main.plugin_settings.get_rumble_enabled())
         self.assertEqual(main.plugin_settings.get_rumble_intensity(), 75)
 
-        self.assertFalse(main.plugin_settings.set_rumble_enabled(False))
+        self.assertTrue(main.plugin_settings.set_rumble_enabled(True))
         self.assertEqual(main.plugin_settings.set_rumble_intensity(55), 55)
 
-        self.assertFalse(main.plugin_settings.get_rumble_enabled())
+        self.assertTrue(main.plugin_settings.get_rumble_enabled())
         self.assertEqual(main.plugin_settings.get_rumble_intensity(), 55)
 
     async def test_plugin_settings_persist_brightness_dial_fix_enabled(self):
-        self.assertTrue(main.plugin_settings.get_brightness_dial_fix_enabled())
-        self.assertFalse(main.plugin_settings.set_brightness_dial_fix_enabled(False))
         self.assertFalse(main.plugin_settings.get_brightness_dial_fix_enabled())
+        self.assertTrue(main.plugin_settings.set_brightness_dial_fix_enabled(True))
+        self.assertTrue(main.plugin_settings.get_brightness_dial_fix_enabled())
 
     async def test_plugin_settings_persist_home_button_enabled(self):
-        self.assertTrue(main.plugin_settings.get_home_button_enabled())
-        self.assertFalse(main.plugin_settings.set_home_button_enabled(False))
         self.assertFalse(main.plugin_settings.get_home_button_enabled())
+        self.assertTrue(main.plugin_settings.set_home_button_enabled(True))
+        self.assertTrue(main.plugin_settings.get_home_button_enabled())
 
     async def test_plugin_settings_reset_clears_persisted_values(self):
-        main.plugin_settings.set_startup_apply_enabled(False)
-        main.plugin_settings.set_home_button_enabled(False)
-        main.plugin_settings.set_brightness_dial_fix_enabled(False)
-        main.plugin_settings.set_rumble_enabled(False)
+        main.plugin_settings.set_startup_apply_enabled(True)
+        main.plugin_settings.set_home_button_enabled(True)
+        main.plugin_settings.set_brightness_dial_fix_enabled(True)
+        main.plugin_settings.set_rumble_enabled(True)
         main.plugin_settings.set_rumble_intensity(55)
         main.plugin_settings.set_missing_glyph_fix_enabled("123", True)
         main.plugin_settings.set_missing_glyph_fix_trackpads_disabled("123", False)
@@ -1714,10 +1703,10 @@ mapping:
         main.plugin_settings.reset_settings()
 
         self.assertEqual(_FAKE_SETTINGS_STORE, {})
-        self.assertTrue(main.plugin_settings.get_startup_apply_enabled())
-        self.assertTrue(main.plugin_settings.get_home_button_enabled())
-        self.assertTrue(main.plugin_settings.get_brightness_dial_fix_enabled())
-        self.assertTrue(main.plugin_settings.get_rumble_enabled())
+        self.assertFalse(main.plugin_settings.get_startup_apply_enabled())
+        self.assertFalse(main.plugin_settings.get_home_button_enabled())
+        self.assertFalse(main.plugin_settings.get_brightness_dial_fix_enabled())
+        self.assertFalse(main.plugin_settings.get_rumble_enabled())
         self.assertEqual(main.plugin_settings.get_rumble_intensity(), 75)
         self.assertEqual(main.plugin_settings.get_missing_glyph_fix_games(), {})
 
@@ -1735,8 +1724,8 @@ mapping:
         self.assertEqual(
             result,
             {
-                "startupApplyEnabled": True,
-                "homeButtonEnabled": True,
+                "startupApplyEnabled": False,
+                "homeButtonEnabled": False,
                 "brightnessDialFixEnabled": False,
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
@@ -1745,10 +1734,10 @@ mapping:
                 "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": True,
                 "pluginVersionNum": "0.0.1-test",
-                "rumbleEnabled": True,
+                "rumbleEnabled": False,
                 "rumbleIntensity": 75,
                 "rumbleAvailable": False,
-                "missingGlyphFixGames": {},
+                "perGameSettings": {},
             },
         )
 
@@ -1940,44 +1929,59 @@ mapping:
         self.assertFalse(repeat_result)
         self.assertEqual(emitted, [])
 
-    async def test_plugin_settings_persist_missing_glyph_fix_games_without_false_entries(self):
-        self.assertEqual(main.plugin_settings.get_missing_glyph_fix_games(), {})
+    async def test_plugin_settings_persist_per_game_settings_with_separate_container_and_button_fix_flags(self):
+        self.assertEqual(main.plugin_settings.get_per_game_settings(), {})
 
         self.assertEqual(
-            main.plugin_settings.set_missing_glyph_fix_enabled("123", True),
-            {"123": {"disableTrackpads": True}},
+            main.plugin_settings.set_per_game_settings_enabled("123", True),
+            {"123": {"enabled": True, "buttonPromptFixEnabled": False, "disableTrackpads": True}},
         )
-        self.assertTrue(main.plugin_settings.get_missing_glyph_fix_enabled("123"))
-        self.assertTrue(main.plugin_settings.get_missing_glyph_fix_trackpads_disabled("123"))
+        self.assertTrue(main.plugin_settings.get_per_game_settings_enabled("123"))
+        self.assertFalse(main.plugin_settings.get_button_prompt_fix_enabled("123"))
+        self.assertTrue(main.plugin_settings.get_per_game_trackpads_disabled("123"))
 
         self.assertEqual(
-            main.plugin_settings.set_missing_glyph_fix_trackpads_disabled("123", False),
-            {"123": {"disableTrackpads": False}},
+            main.plugin_settings.set_button_prompt_fix_enabled("123", True),
+            {"123": {"enabled": True, "buttonPromptFixEnabled": True, "disableTrackpads": True}},
         )
-        self.assertFalse(main.plugin_settings.get_missing_glyph_fix_trackpads_disabled("123"))
+        self.assertTrue(main.plugin_settings.get_button_prompt_fix_enabled("123"))
 
         self.assertEqual(
-            main.plugin_settings.set_missing_glyph_fix_enabled("123", False),
-            {},
+            main.plugin_settings.set_per_game_trackpads_disabled("123", False),
+            {"123": {"enabled": True, "buttonPromptFixEnabled": True, "disableTrackpads": False}},
         )
-        self.assertFalse(main.plugin_settings.get_missing_glyph_fix_enabled("123"))
+        self.assertFalse(main.plugin_settings.get_per_game_trackpads_disabled("123"))
 
-    async def test_plugin_settings_migrates_legacy_missing_glyph_fix_bool_entries(self):
+        self.assertEqual(
+            main.plugin_settings.set_per_game_settings_enabled("123", False),
+            {"123": {"enabled": False, "buttonPromptFixEnabled": True, "disableTrackpads": False}},
+        )
+        self.assertFalse(main.plugin_settings.get_per_game_settings_enabled("123"))
+        self.assertTrue(main.plugin_settings.get_button_prompt_fix_enabled("123"))
+
+    async def test_plugin_settings_migrates_legacy_missing_glyph_fix_entries_to_per_game_settings(self):
         _FAKE_SETTINGS_STORE["missingGlyphFixGames"] = {
             "123": True,
-            "456": False,
+            "456": {"disableTrackpads": False},
         }
 
         self.assertEqual(
-            main.plugin_settings.get_missing_glyph_fix_games(),
-            {"123": {"disableTrackpads": True}},
+            main.plugin_settings.get_per_game_settings(),
+            {
+                "123": {"enabled": True, "buttonPromptFixEnabled": True, "disableTrackpads": True},
+                "456": {"enabled": True, "buttonPromptFixEnabled": True, "disableTrackpads": False},
+            },
         )
-        self.assertTrue(main.plugin_settings.get_missing_glyph_fix_enabled("123"))
-        self.assertTrue(main.plugin_settings.get_missing_glyph_fix_trackpads_disabled("123"))
+        self.assertTrue(main.plugin_settings.get_per_game_settings_enabled("123"))
+        self.assertTrue(main.plugin_settings.get_button_prompt_fix_enabled("123"))
+        self.assertTrue(main.plugin_settings.get_per_game_trackpads_disabled("123"))
+        self.assertTrue(main.plugin_settings.get_per_game_settings_enabled("456"))
+        self.assertTrue(main.plugin_settings.get_button_prompt_fix_enabled("456"))
+        self.assertFalse(main.plugin_settings.get_per_game_trackpads_disabled("456"))
 
-    async def test_set_missing_glyph_fix_trackpads_disabled_ignores_unknown_games(self):
+    async def test_set_per_game_trackpads_disabled_ignores_unknown_games(self):
         self.assertEqual(
-            main.plugin_settings.set_missing_glyph_fix_trackpads_disabled("123", False),
+            main.plugin_settings.set_per_game_trackpads_disabled("123", False),
             {},
         )
 
@@ -1996,8 +2000,8 @@ mapping:
             result,
             {
                 "startupApplyEnabled": False,
-                "homeButtonEnabled": True,
-                "brightnessDialFixEnabled": True,
+                "homeButtonEnabled": False,
+                "brightnessDialFixEnabled": False,
                 "gamescopeZotacProfileBuiltIn": False,
                 "gamescopeZotacProfileInstalled": False,
                 "gamescopeGreenTintFixEnabled": False,
@@ -2005,10 +2009,10 @@ mapping:
                 "gamescopeZotacProfileVerificationState": "absent",
                 "inputplumberAvailable": True,
                 "pluginVersionNum": "0.0.1-test",
-                "rumbleEnabled": True,
+                "rumbleEnabled": False,
                 "rumbleIntensity": 75,
                 "rumbleAvailable": False,
-                "missingGlyphFixGames": {},
+                "perGameSettings": {},
             },
         )
         self.assertEqual(

@@ -1,4 +1,4 @@
-import { ButtonItem, PanelSectionRow, SliderField, ToggleField } from '@decky/ui'
+import { ButtonItem, gamepadDialogClasses, PanelSectionRow, SliderField, ToggleField } from '@decky/ui'
 import type { PluginSettings } from '../../types/plugin'
 
 type Props = {
@@ -63,7 +63,9 @@ const RumblePanel = ({
             <ButtonItem
               layout="below"
               onClick={() => onTestRumble()}
-              disabled={savingRumble || testingRumble || !settings.rumbleEnabled || !settings.rumbleAvailable || !settings.inputplumberAvailable}
+              disabled={
+                savingRumble || testingRumble || !settings.rumbleEnabled || !settings.rumbleAvailable || !settings.inputplumberAvailable
+              }
             >
               {testingRumble ? 'Testing Rumble...' : `Test  ${rumbleIntensityDraft}% Rumble`}
             </ButtonItem>
@@ -71,6 +73,7 @@ const RumblePanel = ({
           {rumbleMessage && rumbleMessageKind === 'error' && (
             <PanelSectionRow>
               <div
+                className={gamepadDialogClasses.FieldDescription}
                 style={{
                   color: rumbleMessageKind === 'error' ? 'red' : undefined,
                 }}

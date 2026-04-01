@@ -1,12 +1,11 @@
 import { callable } from '@decky/api'
 import { PanelSection, PanelSectionRow, ToggleField, gamepadDialogClasses } from '@decky/ui'
 import { useState } from 'react'
-import type { PluginSettings, PluginStatus } from '../types/plugin'
+import type { PluginSettings } from '../types/plugin'
 
 type Props = {
   settings: PluginSettings
   onSettingsChange: (nextSettings: PluginSettings) => void
-  onStatusChange: (nextStatus: PluginStatus) => void
 }
 
 const setGamescopeZotacProfileEnabled = callable<[boolean], PluginSettings>('set_gamescope_zotac_profile_enabled')
@@ -14,88 +13,53 @@ const setGamescopeGreenTintFixEnabled = callable<[boolean], PluginSettings>('set
 
 const RESTART_NOTE = 'Reboot after changing this.'
 const NATIVE_COLOR_TEMPERATURE_HINT = 'Tip: Settings -> Display -> Use Native Color Temperature as per preference.'
-const MANAGED_FILE_STYLE = {
-  fontFamily: 'monospace',
-  overflowWrap: 'anywhere' as const,
-}
+const SUPPORT_POPUP_HINT = 'Open the header info popup for details.'
+const DISPLAY_UPDATE_FAILED_NOTICE = `Couldn't update the display setting. ${SUPPORT_POPUP_HINT}`
+const DISPLAY_MISMATCH_NOTICE = `Display profile did not match the requested state. ${SUPPORT_POPUP_HINT}`
+const DISPLAY_VERIFICATION_NOTICE = `Display profile needs attention. ${SUPPORT_POPUP_HINT}`
+const ZOTAC_PROFILE_DESCRIPTION = `Installs the Zotac OLED Gamescope profile on systems that do not ship it yet. ${RESTART_NOTE}`
 
-function renderManagedFileDescription(text: string, path: string) {
-  return (
-    <>
-      <div>{text}</div>
-      <div>
-        Managed file: <span style={MANAGED_FILE_STYLE}>{path}</span>
-      </div>
-    </>
-  )
-}
-
-function getZotacProfileDescription(path: string) {
-  return renderManagedFileDescription(`Installs the Zotac OLED Gamescope profile on systems that do not ship it yet. ${RESTART_NOTE}`, path)
-}
-
-function getGreenTintDescription(settings: PluginSettings, isBaseProfileAvailable: boolean, path: string) {
+function getGreenTintDescription(settings: PluginSettings, isBaseProfileAvailable: boolean) {
   if (!isBaseProfileAvailable) {
-    return renderManagedFileDescription(`Requires the Zotac OLED profile first. ${RESTART_NOTE}`, path)
+    return `Requires the Zotac OLED profile first. ${RESTART_NOTE}`
   }
 
   if (settings.gamescopeZotacProfileBuiltIn) {
-    return renderManagedFileDescription(`Applies a white point correction to the built-in Zotac OLED profile. ${RESTART_NOTE}`, path)
+    return `Applies a white point correction to the built-in Zotac OLED profile. ${RESTART_NOTE}`
   }
 
-  return renderManagedFileDescription(`Applies a white point correction to reduce green tint. ${RESTART_NOTE}`, path)
+  return `Applies a white point correction to reduce green tint. ${RESTART_NOTE}`
 }
 
-function getManagedFileMismatchMessage(label: string, enabled: boolean, path: string) {
-  return `${label} did not match the managed file state after the update. Requested ${enabled ? 'on' : 'off'} for ${path}.`
-}
-
-function getManagedFileWarning(settings: PluginSettings) {
-  if (settings.gamescopeZotacProfileVerificationState === 'error') {
-    return (
-      <>
-        Unable to read or migrate the managed display profile state:{' '}
-        <span style={MANAGED_FILE_STYLE}>{settings.gamescopeZotacProfileTargetPath}</span>
-      </>
-    )
+function getDisplayVerificationNotice(settings: PluginSettings) {
+  if (
+    settings.gamescopeZotacProfileVerificationState === 'error' ||
+    settings.gamescopeZotacProfileVerificationState === 'unexpected'
+  ) {
+    return DISPLAY_VERIFICATION_NOTICE
   }
 
-  if (!settings.gamescopeZotacProfileInstalled || settings.gamescopeZotacProfileVerificationState !== 'unexpected') {
-    return null
-  }
-
-  return (
-    <>
-      Managed file content does not match the expected DeckyZone profile variant:{' '}
-      <span style={MANAGED_FILE_STYLE}>{settings.gamescopeZotacProfileTargetPath}</span>
-    </>
-  )
+  return null
 }
 
-const DisplayPanel = ({ settings, onSettingsChange, onStatusChange }: Props) => {
+const DisplayPanel = ({ settings, onSettingsChange }: Props) => {
   // TODO: If rapid toggling ever causes stale UI state, serialize these requests
   // or ignore out-of-order responses instead of relying only on disabled toggles
   // and backend file-state readback.
   const [savingZotacProfile, setSavingZotacProfile] = useState(false)
   const [savingGreenTintFix, setSavingGreenTintFix] = useState(false)
+  const [displayNotice, setDisplayNotice] = useState<string | null>(null)
   const isBaseProfileAvailable = settings.gamescopeZotacProfileBuiltIn || settings.gamescopeZotacProfileInstalled
+  const visibleDisplayNotice = displayNotice ?? getDisplayVerificationNotice(settings)
 
   const handleZotacProfileChange = async (enabled: boolean) => {
     setSavingZotacProfile(true)
     try {
       const nextSettings = await setGamescopeZotacProfileEnabled(enabled)
       onSettingsChange(nextSettings)
-      if (nextSettings.gamescopeZotacProfileInstalled !== enabled) {
-        onStatusChange({
-          state: 'failed',
-          message: getManagedFileMismatchMessage('Zotac OLED profile', enabled, nextSettings.gamescopeZotacProfileTargetPath),
-        })
-      }
-    } catch (error) {
-      onStatusChange({
-        state: 'failed',
-        message: `Failed to update Zotac OLED profile: ${String(error)}`,
-      })
+      setDisplayNotice(nextSettings.gamescopeZotacProfileInstalled !== enabled ? DISPLAY_MISMATCH_NOTICE : null)
+    } catch {
+      setDisplayNotice(DISPLAY_UPDATE_FAILED_NOTICE)
     } finally {
       setSavingZotacProfile(false)
     }
@@ -106,17 +70,9 @@ const DisplayPanel = ({ settings, onSettingsChange, onStatusChange }: Props) => 
     try {
       const nextSettings = await setGamescopeGreenTintFixEnabled(enabled)
       onSettingsChange(nextSettings)
-      if (nextSettings.gamescopeGreenTintFixEnabled !== enabled) {
-        onStatusChange({
-          state: 'failed',
-          message: getManagedFileMismatchMessage('Green tint fix', enabled, nextSettings.gamescopeZotacProfileTargetPath),
-        })
-      }
-    } catch (error) {
-      onStatusChange({
-        state: 'failed',
-        message: `Failed to update green tint fix: ${String(error)}`,
-      })
+      setDisplayNotice(nextSettings.gamescopeGreenTintFixEnabled !== enabled ? DISPLAY_MISMATCH_NOTICE : null)
+    } catch {
+      setDisplayNotice(DISPLAY_UPDATE_FAILED_NOTICE)
     } finally {
       setSavingGreenTintFix(false)
     }
@@ -131,7 +87,7 @@ const DisplayPanel = ({ settings, onSettingsChange, onStatusChange }: Props) => 
             checked={settings.gamescopeZotacProfileInstalled}
             onChange={(value: boolean) => void handleZotacProfileChange(value)}
             disabled={savingZotacProfile}
-            description={getZotacProfileDescription(settings.gamescopeZotacProfileTargetPath)}
+            description={ZOTAC_PROFILE_DESCRIPTION}
           />
         </PanelSectionRow>
       )}
@@ -141,12 +97,12 @@ const DisplayPanel = ({ settings, onSettingsChange, onStatusChange }: Props) => 
           checked={settings.gamescopeGreenTintFixEnabled}
           onChange={(value: boolean) => void handleGreenTintFixChange(value)}
           disabled={savingGreenTintFix || !isBaseProfileAvailable}
-          description={getGreenTintDescription(settings, isBaseProfileAvailable, settings.gamescopeZotacProfileTargetPath)}
+          description={getGreenTintDescription(settings, isBaseProfileAvailable)}
         />
       </PanelSectionRow>
-      {getManagedFileWarning(settings) && (
+      {visibleDisplayNotice && (
         <PanelSectionRow>
-          <div className={gamepadDialogClasses.FieldDescription}>{getManagedFileWarning(settings)}</div>
+          <div className={gamepadDialogClasses.FieldDescription}>{visibleDisplayNotice}</div>
         </PanelSectionRow>
       )}
       <PanelSectionRow>

@@ -183,7 +183,7 @@ class DeckyZoneService:
         self._rumble_available = bool(self.probe_rumble_available())
         return self._current_settings()
 
-    def get_support_snapshot(self):
+    def get_debug_info(self):
         status = self.get_status()
         inputplumber_available = bool(self.probe_inputplumber_available())
         profile_name = None
@@ -358,48 +358,6 @@ class DeckyZoneService:
                     / "zotac.zone.oled.lua"
                 ),
             ),
-            "legacyManagedBaseProfilePath": self._get_gamescope_support_path(
-                "legacy_managed_base_profile_path",
-                str(
-                    Path(decky.DECKY_USER_HOME)
-                    / ".config"
-                    / "gamescope"
-                    / "scripts"
-                    / "90-deckyzone"
-                    / "displays"
-                    / "10-zotac-zone-oled.lua"
-                ),
-            ),
-            "legacyManagedGreenTintProfilePath": self._get_gamescope_support_path(
-                "legacy_managed_green_tint_profile_path",
-                str(
-                    Path(decky.DECKY_USER_HOME)
-                    / ".config"
-                    / "gamescope"
-                    / "scripts"
-                    / "90-deckyzone"
-                    / "displays"
-                    / "20-zotac-zone-green-tint.lua"
-                ),
-            ),
-            "assetBaseProfilePath": str(
-                Path(
-                    self._get_gamescope_support_path(
-                        "assets_dir",
-                        str(Path(decky.DECKY_PLUGIN_DIR) / "assets" / "gamescope"),
-                    )
-                )
-                / "zotac.zone.oled.lua"
-            ),
-            "assetGreenTintProfilePath": str(
-                Path(
-                    self._get_gamescope_support_path(
-                        "assets_dir",
-                        str(Path(decky.DECKY_PLUGIN_DIR) / "assets" / "gamescope"),
-                    )
-                )
-                / "zotac.zone.green-tint.lua"
-            ),
         }
 
     def _current_settings(self):
@@ -418,7 +376,7 @@ class DeckyZoneService:
             "rumbleEnabled": self.settings_store.get_rumble_enabled(),
             "rumbleIntensity": self.settings_store.get_rumble_intensity(),
             "rumbleAvailable": self._rumble_available,
-            "missingGlyphFixGames": self.settings_store.get_missing_glyph_fix_games(),
+            "perGameSettings": self.settings_store.get_per_game_settings(),
         }
 
     def get_env(self):
@@ -1021,38 +979,52 @@ class DeckyZoneService:
         )
         self._inputplumber_available = True
 
-    def set_missing_glyph_fix_enabled(self, app_id, enabled):
+    def set_per_game_settings_enabled(self, app_id, enabled):
         if app_id in (None, "", DEFAULT_APP_ID):
             return self._current_settings()
 
         if enabled and not self.probe_inputplumber_available():
             return self._current_settings()
 
-        self.settings_store.set_missing_glyph_fix_enabled(app_id, enabled)
+        self.settings_store.set_per_game_settings_enabled(app_id, enabled)
         return self._current_settings()
 
-    def set_missing_glyph_fix_trackpads_disabled(self, app_id, disabled):
+    def set_button_prompt_fix_enabled(self, app_id, enabled):
+        if app_id in (None, "", DEFAULT_APP_ID):
+            return self._current_settings()
+
+        if enabled and not self.probe_inputplumber_available():
+            return self._current_settings()
+
+        self.settings_store.set_button_prompt_fix_enabled(app_id, enabled)
+        return self._current_settings()
+
+    def set_per_game_trackpads_disabled(self, app_id, disabled):
         if app_id in (None, "", DEFAULT_APP_ID):
             return self._current_settings()
 
         if disabled and not self.probe_inputplumber_available():
             return self._current_settings()
 
-        self.settings_store.set_missing_glyph_fix_trackpads_disabled(app_id, disabled)
+        self.settings_store.set_per_game_trackpads_disabled(app_id, disabled)
         return self._current_settings()
 
-    async def sync_missing_glyph_fix_target(self, app_id):
+    async def sync_per_game_target(self, app_id):
         app_id = str(app_id or DEFAULT_APP_ID)
-        glyph_fix_enabled = (
+        per_game_settings_enabled = (
             app_id != DEFAULT_APP_ID
-            and self.settings_store.get_missing_glyph_fix_enabled(app_id)
+            and self.settings_store.get_per_game_settings_enabled(app_id)
+        )
+        button_prompt_fix_enabled = (
+            per_game_settings_enabled
+            and self.settings_store.get_button_prompt_fix_enabled(app_id)
         )
         trackpads_disabled = (
-            glyph_fix_enabled
-            and self.settings_store.get_missing_glyph_fix_trackpads_disabled(app_id)
+            button_prompt_fix_enabled
+            and self.settings_store.get_per_game_trackpads_disabled(app_id)
         )
 
-        if glyph_fix_enabled:
+        if button_prompt_fix_enabled:
             trackpad_result = (
                 self._grab_zotac_mouse_device()
                 if trackpads_disabled
@@ -1075,10 +1047,10 @@ class DeckyZoneService:
                 return trackpad_result
             except subprocess.CalledProcessError as error:
                 detail = (error.stderr or error.stdout or str(error)).strip()
-                self.logger.warning(f"Failed to apply missing glyph fix: {detail}")
+                self.logger.warning(f"Failed to apply per-game controller override: {detail}")
                 return False
             except Exception as error:
-                self.logger.warning(f"Failed to apply missing glyph fix: {error}")
+                self.logger.warning(f"Failed to apply per-game controller override: {error}")
                 return False
 
         self._release_zotac_mouse_device()
@@ -1107,6 +1079,15 @@ class DeckyZoneService:
         except Exception as error:
             self.logger.warning(f"Failed to restore inherited controller target: {error}")
             return False
+
+    def set_missing_glyph_fix_enabled(self, app_id, enabled):
+        return self.set_button_prompt_fix_enabled(app_id, enabled)
+
+    def set_missing_glyph_fix_trackpads_disabled(self, app_id, disabled):
+        return self.set_per_game_trackpads_disabled(app_id, disabled)
+
+    async def sync_missing_glyph_fix_target(self, app_id):
+        return await self.sync_per_game_target(app_id)
 
     def _is_linux_platform(self):
         return sys.platform.startswith("linux")
@@ -1679,8 +1660,8 @@ class Plugin:
     async def get_settings(self):
         return self.service.get_settings()
 
-    async def get_support_snapshot(self):
-        return self.service.get_support_snapshot()
+    async def get_debug_info(self):
+        return self.service.get_debug_info()
 
     async def set_startup_apply_enabled(self, enabled):
         if not enabled and self.startup_task and not self.startup_task.done():
@@ -1718,13 +1699,16 @@ class Plugin:
     async def set_gamescope_green_tint_fix_enabled(self, enabled):
         return await self.service.set_gamescope_green_tint_fix_enabled(enabled)
 
-    async def set_missing_glyph_fix_enabled(self, app_id, enabled):
-        return self.service.set_missing_glyph_fix_enabled(app_id, enabled)
+    async def set_per_game_settings_enabled(self, app_id, enabled):
+        return self.service.set_per_game_settings_enabled(app_id, enabled)
 
-    async def set_missing_glyph_fix_trackpads_disabled(self, app_id, disabled):
-        return self.service.set_missing_glyph_fix_trackpads_disabled(app_id, disabled)
+    async def set_button_prompt_fix_enabled(self, app_id, enabled):
+        return self.service.set_button_prompt_fix_enabled(app_id, enabled)
 
-    async def sync_missing_glyph_fix_target(self, app_id):
+    async def set_per_game_trackpads_disabled(self, app_id, disabled):
+        return self.service.set_per_game_trackpads_disabled(app_id, disabled)
+
+    async def sync_per_game_target(self, app_id):
         if self.startup_task is not None:
             try:
                 await self.startup_task
@@ -1733,7 +1717,18 @@ class Plugin:
             finally:
                 if self.startup_task.done():
                     self.startup_task = None
+        if hasattr(self.service, "sync_per_game_target"):
+            return await self.service.sync_per_game_target(app_id)
         return await self.service.sync_missing_glyph_fix_target(app_id)
+
+    async def set_missing_glyph_fix_enabled(self, app_id, enabled):
+        return await self.set_button_prompt_fix_enabled(app_id, enabled)
+
+    async def set_missing_glyph_fix_trackpads_disabled(self, app_id, disabled):
+        return await self.set_per_game_trackpads_disabled(app_id, disabled)
+
+    async def sync_missing_glyph_fix_target(self, app_id):
+        return await self.sync_per_game_target(app_id)
 
     async def test_rumble(self):
         return await self.service.test_rumble()

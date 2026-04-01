@@ -1,8 +1,8 @@
 import { callable } from '@decky/api'
-import { PanelSection } from '@decky/ui'
+import { PanelSection, PanelSectionRow, gamepadDialogClasses } from '@decky/ui'
 import { useEffect, useRef, useState } from 'react'
 import ControllerTogglesPanel from './controller/ControllerTogglesPanel'
-import GlyphFixPanel from './controller/GlyphFixPanel'
+import PerGameSettingsPanel from './controller/PerGameSettingsPanel'
 import RumblePanel from './controller/RumblePanel'
 import type { ActiveGame, PluginSettings, PluginStatus } from '../types/plugin'
 
@@ -11,11 +11,13 @@ type SteamInputDiagnosticAppDetails = {
   eEnableThirdPartyControllerConfiguration?: number
   eSteamInputControllerMask?: number
 }
+
 type SteamInputDiagnosticState =
   | { state: 'idle' }
   | { state: 'loading'; appId: string }
   | { state: 'ready'; appId: string; details: SteamInputDiagnosticAppDetails }
   | { state: 'unavailable'; appId: string; message: string }
+
 type SteamAppsClient = {
   GetCachedAppDetails?: (appId: number) => Promise<unknown>
   RegisterForAppDetails?: (appId: number, callback: (details: unknown) => void) => { unregister?: () => void }
@@ -33,15 +35,36 @@ const getStatus = callable<[], PluginStatus>('get_status')
 const setStartupApplyEnabled = callable<[boolean], PluginSettings>('set_startup_apply_enabled')
 const setHomeButtonEnabled = callable<[boolean], PluginSettings>('set_home_button_enabled')
 const setBrightnessDialFixEnabled = callable<[boolean], PluginSettings>('set_brightness_dial_fix_enabled')
-const setMissingGlyphFixEnabled = callable<[string, boolean], PluginSettings>('set_missing_glyph_fix_enabled')
-const setMissingGlyphFixTrackpadsDisabled = callable<[string, boolean], PluginSettings>('set_missing_glyph_fix_trackpads_disabled')
-const syncMissingGlyphFixTarget = callable<[string], boolean>('sync_missing_glyph_fix_target')
+const setPerGameSettingsEnabled = callable<[string, boolean], PluginSettings>('set_per_game_settings_enabled')
+const setButtonPromptFixEnabled = callable<[string, boolean], PluginSettings>('set_button_prompt_fix_enabled')
+const setPerGameTrackpadsDisabled = callable<[string, boolean], PluginSettings>('set_per_game_trackpads_disabled')
+const syncPerGameTarget = callable<[string], boolean>('sync_per_game_target')
 const setRumbleEnabled = callable<[boolean], PluginSettings>('set_rumble_enabled')
 const setRumbleIntensity = callable<[number], PluginSettings>('set_rumble_intensity')
 const testRumble = callable<[], boolean>('test_rumble')
 
 const DEFAULT_APP_ID = '0'
 const STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE = 'Steam Input state unavailable.'
+const SUPPORT_POPUP_HINT = 'Open the header info popup for details.'
+const CONTROLLER_STATUS_FAILED_NOTICE = `Controller setup needs attention. ${SUPPORT_POPUP_HINT}`
+const CONTROLLER_ACTION_FAILED_NOTICE = `Couldn't update the controller setting. ${SUPPORT_POPUP_HINT}`
+const PER_GAME_SETTINGS_ACTION_FAILED_NOTICE = `Couldn't update the per-game setting. ${SUPPORT_POPUP_HINT}`
+const BUTTON_PROMPT_FIX_ACTION_FAILED_NOTICE = `Couldn't update the button prompt fix. ${SUPPORT_POPUP_HINT}`
+const TRACKPADS_ACTION_FAILED_NOTICE = `Couldn't update the trackpad setting. ${SUPPORT_POPUP_HINT}`
+const RUMBLE_ACTION_FAILED_NOTICE = `Couldn't update vibration. ${SUPPORT_POPUP_HINT}`
+const RUMBLE_TEST_FAILED_NOTICE = `Couldn't send a vibration test. ${SUPPORT_POPUP_HINT}`
+
+function getControllerStatusNotice(status: PluginStatus) {
+  if (status.state === 'unsupported') {
+    return status.message
+  }
+
+  if (status.state === 'failed') {
+    return CONTROLLER_STATUS_FAILED_NOTICE
+  }
+
+  return null
+}
 
 function normalizeSteamInputDiagnosticDetails(rawDetails: unknown): SteamInputDiagnosticAppDetails | null {
   let parsedDetails = rawDetails
@@ -94,19 +117,22 @@ function getSteamInputDiagnosticStatus(details: SteamInputDiagnosticAppDetails) 
 
 async function syncActiveGameTarget(appId: string) {
   try {
-    await syncMissingGlyphFixTarget(appId)
+    await syncPerGameTarget(appId)
   } catch (error) {
-    console.error('Failed to sync missing glyph fix target', error)
+    console.error('Failed to sync per-game target', error)
   }
 }
 
 const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onStatusChange }: Props) => {
   const [rumbleIntensityDraft, setRumbleIntensityDraft] = useState(settings.rumbleIntensity)
+  const [controllerNotice, setControllerNotice] = useState<string | null>(null)
+  const [perGameNotice, setPerGameNotice] = useState<string | null>(null)
   const [savingStartup, setSavingStartup] = useState(false)
   const [savingHomeButton, setSavingHomeButton] = useState(false)
   const [savingBrightnessDialFix, setSavingBrightnessDialFix] = useState(false)
-  const [savingMissingGlyphFix, setSavingMissingGlyphFix] = useState(false)
-  const [savingMissingGlyphFixTrackpads, setSavingMissingGlyphFixTrackpads] = useState(false)
+  const [savingPerGameSettings, setSavingPerGameSettings] = useState(false)
+  const [savingButtonPromptFix, setSavingButtonPromptFix] = useState(false)
+  const [savingPerGameTrackpads, setSavingPerGameTrackpads] = useState(false)
   const [savingRumble, setSavingRumble] = useState(false)
   const [testingRumble, setTestingRumble] = useState(false)
   const [rumbleMessage, setRumbleMessage] = useState<string | null>(null)
@@ -147,13 +173,11 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
     try {
       const nextSettings = await setStartupApplyEnabled(enabled)
       onSettingsChange(nextSettings)
+      setControllerNotice(null)
       await loadStatus()
       await syncActiveGameTarget(activeGame?.appid ?? DEFAULT_APP_ID)
-    } catch (error) {
-      onStatusChange({
-        state: 'failed',
-        message: `Failed to update startup setting: ${String(error)}`,
-      })
+    } catch {
+      setControllerNotice(CONTROLLER_ACTION_FAILED_NOTICE)
     } finally {
       setSavingStartup(false)
     }
@@ -164,11 +188,9 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
     try {
       const nextSettings = await setHomeButtonEnabled(enabled)
       onSettingsChange(nextSettings)
-    } catch (error) {
-      onStatusChange({
-        state: 'failed',
-        message: `Failed to update Home button setting: ${String(error)}`,
-      })
+      setControllerNotice(null)
+    } catch {
+      setControllerNotice(CONTROLLER_ACTION_FAILED_NOTICE)
     } finally {
       setSavingHomeButton(false)
     }
@@ -179,33 +201,65 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
     try {
       const nextSettings = await setBrightnessDialFixEnabled(enabled)
       onSettingsChange(nextSettings)
-    } catch (error) {
-      onStatusChange({
-        state: 'failed',
-        message: `Failed to update brightness dial fix: ${String(error)}`,
-      })
+      setControllerNotice(null)
+    } catch {
+      setControllerNotice(CONTROLLER_ACTION_FAILED_NOTICE)
     } finally {
       setSavingBrightnessDialFix(false)
     }
   }
 
-  const handleMissingGlyphFixToggleChange = async (enabled: boolean) => {
+  const handlePerGameSettingsToggleChange = async (enabled: boolean) => {
     if (!activeGame) {
       return
     }
 
-    setSavingMissingGlyphFix(true)
+    setSavingPerGameSettings(true)
     try {
-      const nextSettings = await setMissingGlyphFixEnabled(activeGame.appid, enabled)
+      const nextSettings = await setPerGameSettingsEnabled(activeGame.appid, enabled)
       onSettingsChange(nextSettings)
+      setPerGameNotice(null)
       await syncActiveGameTarget(activeGame.appid)
-    } catch (error) {
-      onStatusChange({
-        state: 'failed',
-        message: `Failed to update missing glyph fix: ${String(error)}`,
-      })
+    } catch {
+      setPerGameNotice(PER_GAME_SETTINGS_ACTION_FAILED_NOTICE)
     } finally {
-      setSavingMissingGlyphFix(false)
+      setSavingPerGameSettings(false)
+    }
+  }
+
+  const handleButtonPromptFixToggleChange = async (enabled: boolean) => {
+    if (!activeGame) {
+      return
+    }
+
+    setSavingButtonPromptFix(true)
+    try {
+      const nextSettings = await setButtonPromptFixEnabled(activeGame.appid, enabled)
+      onSettingsChange(nextSettings)
+      setPerGameNotice(null)
+      await syncActiveGameTarget(activeGame.appid)
+    } catch {
+      setPerGameNotice(BUTTON_PROMPT_FIX_ACTION_FAILED_NOTICE)
+    } finally {
+      setSavingButtonPromptFix(false)
+    }
+  }
+
+  const handlePerGameTrackpadsChange = async (disabled: boolean) => {
+    if (!activeGame || !isPerGameSettingsEnabled || !isButtonPromptFixEnabled) {
+      return
+    }
+
+    setSavingPerGameTrackpads(true)
+    try {
+      const nextSettings = await setPerGameTrackpadsDisabled(activeGame.appid, disabled)
+      onSettingsChange(nextSettings)
+      setPerGameNotice(null)
+      await syncActiveGameTarget(activeGame.appid)
+    } catch {
+      setPerGameNotice(TRACKPADS_ACTION_FAILED_NOTICE)
+    } finally {
+      setSavingPerGameTrackpads(false)
     }
   }
 
@@ -222,12 +276,9 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
       rumbleIntensityLatestValue.current = nextSettings.rumbleIntensity
       setRumbleMessage(null)
       setRumbleMessageKind(null)
-      await loadStatus()
-    } catch (error) {
-      onStatusChange({
-        state: 'failed',
-        message: `Failed to update rumble setting: ${String(error)}`,
-      })
+    } catch {
+      setRumbleMessage(RUMBLE_ACTION_FAILED_NOTICE)
+      setRumbleMessageKind('error')
     } finally {
       setSavingRumble(false)
     }
@@ -243,11 +294,9 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
       })
       setRumbleMessage(null)
       setRumbleMessageKind(null)
-    } catch (error) {
-      onStatusChange({
-        state: 'failed',
-        message: `Failed to update vibration intensity: ${String(error)}`,
-      })
+    } catch {
+      setRumbleMessage(RUMBLE_ACTION_FAILED_NOTICE)
+      setRumbleMessageKind('error')
     }
   }
 
@@ -268,42 +317,24 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
     setRumbleMessageKind(null)
     try {
       const success = await testRumble()
-      setRumbleMessage(success ? 'Sent a test rumble event.' : 'Failed to send a test rumble event.')
+      setRumbleMessage(success ? 'Vibration test sent.' : RUMBLE_TEST_FAILED_NOTICE)
       setRumbleMessageKind(success ? 'success' : 'error')
-    } catch (error) {
-      setRumbleMessage(`Failed to send a test rumble event: ${String(error)}`)
+    } catch {
+      setRumbleMessage(RUMBLE_TEST_FAILED_NOTICE)
       setRumbleMessageKind('error')
     } finally {
       setTestingRumble(false)
     }
   }
 
-  const handleMissingGlyphFixTrackpadsChange = async (disabled: boolean) => {
-    if (!activeGame || !isMissingGlyphFixEnabled) {
-      return
-    }
-
-    setSavingMissingGlyphFixTrackpads(true)
-    try {
-      const nextSettings = await setMissingGlyphFixTrackpadsDisabled(activeGame.appid, disabled)
-      onSettingsChange(nextSettings)
-      await syncActiveGameTarget(activeGame.appid)
-    } catch (error) {
-      onStatusChange({
-        state: 'failed',
-        message: `Failed to update trackpad setting: ${String(error)}`,
-      })
-    } finally {
-      setSavingMissingGlyphFixTrackpads(false)
-    }
-  }
-
-  const activeGameGlyphFixSettings = activeGame ? settings.missingGlyphFixGames[activeGame.appid] : undefined
-  const isMissingGlyphFixEnabled = Boolean(activeGameGlyphFixSettings)
-  const isTrackpadsDisabled = activeGameGlyphFixSettings?.disableTrackpads ?? true
+  const activeGamePerGameSettings = activeGame ? settings.perGameSettings[activeGame.appid] : undefined
+  const controllerFeaturesEnabled = settings.startupApplyEnabled
+  const isPerGameSettingsEnabled = activeGamePerGameSettings?.enabled ?? false
+  const isButtonPromptFixEnabled = activeGamePerGameSettings?.buttonPromptFixEnabled ?? false
+  const isTrackpadsDisabled = activeGamePerGameSettings?.disableTrackpads ?? true
 
   useEffect(() => {
-    if (!activeGame || !isMissingGlyphFixEnabled) {
+    if (!activeGame || !isPerGameSettingsEnabled || !isButtonPromptFixEnabled) {
       setSteamInputDiagnostic({ state: 'idle' })
       return
     }
@@ -370,16 +401,16 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
       cancelled = true
       registration?.unregister?.()
     }
-  }, [activeGame, isMissingGlyphFixEnabled])
+  }, [activeGame, isPerGameSettingsEnabled, isButtonPromptFixEnabled])
 
   const shouldShowSteamInputDisabledWarning =
     steamInputDiagnostic.state === 'ready' && getSteamInputDiagnosticStatus(steamInputDiagnostic.details) === 'Steam Input disabled'
-  const isMissingGlyphFixActive = settings.inputplumberAvailable && isMissingGlyphFixEnabled
+  const isButtonPromptFixActive = settings.inputplumberAvailable && isPerGameSettingsEnabled && isButtonPromptFixEnabled
+  const visibleControllerNotice = getControllerStatusNotice(status) ?? controllerNotice
 
   return (
     <PanelSection title="Controller">
       <ControllerTogglesPanel
-        status={status}
         settings={settings}
         savingStartup={savingStartup}
         savingHomeButton={savingHomeButton}
@@ -388,29 +419,46 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
         onHomeButtonToggleChange={(value: boolean) => void handleHomeButtonToggleChange(value)}
         onBrightnessDialFixToggleChange={(value: boolean) => void handleBrightnessDialFixToggleChange(value)}
       />
-      <RumblePanel
-        settings={settings}
-        savingRumble={savingRumble}
-        testingRumble={testingRumble}
-        rumbleIntensityDraft={rumbleIntensityDraft}
-        rumbleMessage={rumbleMessage}
-        rumbleMessageKind={rumbleMessageKind}
-        onRumbleToggleChange={(value: boolean) => void handleRumbleToggleChange(value)}
-        onRumbleIntensityChange={handleRumbleIntensityChange}
-        onTestRumble={() => void handleTestRumble()}
-      />
-      <GlyphFixPanel
-        activeGame={activeGame}
-        inputplumberAvailable={settings.inputplumberAvailable}
-        isMissingGlyphFixEnabled={isMissingGlyphFixEnabled}
-        isMissingGlyphFixActive={isMissingGlyphFixActive}
-        isTrackpadsDisabled={isTrackpadsDisabled}
-        savingMissingGlyphFix={savingMissingGlyphFix}
-        savingMissingGlyphFixTrackpads={savingMissingGlyphFixTrackpads}
-        shouldShowSteamInputDisabledWarning={shouldShowSteamInputDisabledWarning}
-        onMissingGlyphFixToggleChange={(value: boolean) => void handleMissingGlyphFixToggleChange(value)}
-        onMissingGlyphFixTrackpadsChange={(value: boolean) => void handleMissingGlyphFixTrackpadsChange(value)}
-      />
+      {visibleControllerNotice && (
+        <PanelSectionRow>
+          <div className={gamepadDialogClasses.FieldDescription}>{visibleControllerNotice}</div>
+        </PanelSectionRow>
+      )}
+      {controllerFeaturesEnabled && (
+        <>
+          <RumblePanel
+            settings={settings}
+            savingRumble={savingRumble}
+            testingRumble={testingRumble}
+            rumbleIntensityDraft={rumbleIntensityDraft}
+            rumbleMessage={rumbleMessage}
+            rumbleMessageKind={rumbleMessageKind}
+            onRumbleToggleChange={(value: boolean) => void handleRumbleToggleChange(value)}
+            onRumbleIntensityChange={handleRumbleIntensityChange}
+            onTestRumble={() => void handleTestRumble()}
+          />
+          <PerGameSettingsPanel
+            activeGame={activeGame}
+            inputplumberAvailable={settings.inputplumberAvailable}
+            isPerGameSettingsEnabled={isPerGameSettingsEnabled}
+            isButtonPromptFixEnabled={isButtonPromptFixEnabled}
+            isButtonPromptFixActive={isButtonPromptFixActive}
+            isTrackpadsDisabled={isTrackpadsDisabled}
+            savingPerGameSettings={savingPerGameSettings}
+            savingButtonPromptFix={savingButtonPromptFix}
+            savingPerGameTrackpads={savingPerGameTrackpads}
+            shouldShowSteamInputDisabledWarning={shouldShowSteamInputDisabledWarning}
+            onPerGameSettingsToggleChange={(value: boolean) => void handlePerGameSettingsToggleChange(value)}
+            onButtonPromptFixToggleChange={(value: boolean) => void handleButtonPromptFixToggleChange(value)}
+            onPerGameTrackpadsChange={(value: boolean) => void handlePerGameTrackpadsChange(value)}
+          />
+          {perGameNotice && (
+            <PanelSectionRow>
+              <div className={gamepadDialogClasses.FieldDescription}>{perGameNotice}</div>
+            </PanelSectionRow>
+          )}
+        </>
+      )}
     </PanelSection>
   )
 }

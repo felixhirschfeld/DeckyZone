@@ -26,7 +26,7 @@ type BootstrapState = { state: 'loading' } | { state: 'ready'; snapshot: Bootstr
 
 const getStatus = callable<[], PluginStatus>('get_status')
 const getSettings = callable<[], PluginSettings>('get_settings')
-const syncMissingGlyphFixTarget = callable<[string], boolean>('sync_missing_glyph_fix_target')
+const syncPerGameTarget = callable<[string], boolean>('sync_per_game_target')
 
 const DEFAULT_APP_ID = '0'
 const ACTIVE_GAME_POLL_INTERVAL_MS = 1000
@@ -275,9 +275,9 @@ function areGamesEqual(left: ActiveGame | null, right: ActiveGame | null) {
 
 async function syncActiveGameTarget(appId: string) {
   try {
-    await syncMissingGlyphFixTarget(appId)
+    await syncPerGameTarget(appId)
   } catch (error) {
-    console.error('Failed to sync missing glyph fix target', error)
+    console.error('Failed to sync per-game target', error)
   }
 }
 
@@ -373,7 +373,6 @@ function Content() {
         <DisplayPanel
           settings={settings}
           onSettingsChange={applySettingsUpdate}
-          onStatusChange={applyStatusUpdate}
         />
       </ErrorBoundary>
       <ErrorBoundary title="Updates">
