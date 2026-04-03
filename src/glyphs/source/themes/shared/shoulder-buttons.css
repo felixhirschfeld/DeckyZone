@@ -2,12 +2,16 @@ img[src="/steaminputglyphs/ps5_l1.svg"],
 img[src="/steaminputglyphs/xbox_lb.svg"],
 img[src="/steaminputglyphs/sd_l1.svg"] {
     content: var(--button-lb-image, url("/__deckyzone_glyph_assets__/shared/lb.svg"));
+    width: var(--button-lb-width, 28px);
+    height: var(--button-lb-height, 28px);
 }
 
 img[src="/steaminputglyphs/ps5_r1.svg"],
 img[src="/steaminputglyphs/xbox_rb.svg"],
 img[src="/steaminputglyphs/sd_r1.svg"] {
     content: var(--button-rb-image, url("/__deckyzone_glyph_assets__/shared/rb.svg"));
+    width: var(--button-rb-width, 28px);
+    height: var(--button-rb-height, 28px);
 }
 
 img[src="/steaminputglyphs/ps5_l2.svg"],

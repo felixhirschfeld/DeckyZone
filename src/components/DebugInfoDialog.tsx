@@ -1,11 +1,7 @@
 import { callable } from '@decky/api'
 import {
-  ControlsList,
   DialogBody,
-  DialogButton,
   DialogControlsSection,
-  DialogControlsSectionHeader,
-  DialogFooter,
   Field,
   ModalRoot,
   SteamSpinner,
@@ -28,17 +24,15 @@ type SnapshotRowProps = {
   bottomSeparator?: 'standard' | 'thick' | 'none'
 }
 
-type PathListProps = {
-  label: string
+type PathDetailsProps = {
   paths: string[]
-  bottomSeparator?: 'standard' | 'thick' | 'none'
 }
 
 const bodyStyle = {
   display: 'flex',
   flexDirection: 'column' as const,
-  gap: '12px',
-  padding: '0 12px 12px',
+  gap: '8px',
+  padding: '0 10px 0',
 }
 
 const tabsHostStyle = {
@@ -52,7 +46,7 @@ const tabContentStyle = {
   boxSizing: 'border-box' as const,
   height: '100%',
   overflowY: 'auto' as const,
-  padding: '8px 4px 0 0',
+  padding: '0 2px 0 0',
 }
 
 const pathListStyle = {
@@ -82,15 +76,13 @@ const SnapshotRow = ({ label, value, description, bottomSeparator = 'standard' }
   )
 }
 
-const PathList = ({ label, paths, bottomSeparator = 'standard' }: PathListProps) => {
+const PathDetails = ({ paths }: PathDetailsProps) => {
   return (
-    <Field label={label} highlightOnFocus={false} bottomSeparator={bottomSeparator}>
-      <div style={pathListStyle}>
-        {paths.map((path) => (
-          <PathText key={path} path={path} />
-        ))}
-      </div>
-    </Field>
+    <div style={pathListStyle}>
+      {paths.map((path) => (
+        <PathText key={path} path={path} />
+      ))}
+    </div>
   )
 }
 
@@ -100,6 +92,11 @@ const formatValue = (value: string | null | undefined) => {
 
 const formatBoolean = (value: boolean) => {
   return value ? 'Yes' : 'No'
+}
+
+const isVerificationHealthy = (value: string | null | undefined) => {
+  const normalized = (value ?? '').trim().toLowerCase()
+  return normalized === 'ok' || normalized === 'healthy' || normalized === 'verified'
 }
 
 const TabContent = ({ children }: { children: ReactNode }) => {
@@ -162,49 +159,24 @@ const DebugInfoDialog = ({ closeModal }: Props) => {
                   content: (
                     <TabContent>
                       <DialogControlsSection>
-                        <DialogControlsSectionHeader>Device Identity</DialogControlsSectionHeader>
-                        <SnapshotRow
-                          label="Vendor"
-                          value={formatValue(snapshot.deviceIdentity.vendorName)}
-                          description={snapshot.deviceIdentity.dmiPaths[0] ? <PathText path={snapshot.deviceIdentity.dmiPaths[0]} /> : undefined}
-                        />
                         <SnapshotRow
                           label="Product"
                           value={formatValue(snapshot.deviceIdentity.productName)}
-                          description={snapshot.deviceIdentity.dmiPaths[1] ? <PathText path={snapshot.deviceIdentity.dmiPaths[1]} /> : undefined}
                         />
                         <SnapshotRow
                           label="Board"
                           value={formatValue(snapshot.deviceIdentity.boardName)}
-                          description={snapshot.deviceIdentity.dmiPaths[2] ? <PathText path={snapshot.deviceIdentity.dmiPaths[2]} /> : undefined}
                         />
                         <SnapshotRow
-                          label="Board Vendor"
-                          value={formatValue(snapshot.deviceIdentity.boardVendor)}
-                          description={snapshot.deviceIdentity.dmiPaths[3] ? <PathText path={snapshot.deviceIdentity.dmiPaths[3]} /> : undefined}
+                          label="Distro"
+                          value={formatValue(snapshot.osContext.prettyName)}
                         />
                         <SnapshotRow
-                          label="Supported Device"
-                          value={formatBoolean(snapshot.deviceIdentity.supportedDevice)}
-                          bottomSeparator="none"
-                        />
-                      </DialogControlsSection>
-
-                      <DialogControlsSection>
-                        <DialogControlsSectionHeader>OS Context</DialogControlsSectionHeader>
-                        <SnapshotRow label="Distro" value={formatValue(snapshot.osContext.prettyName)} />
-                        <PathList label="os-release paths" paths={snapshot.osContext.osReleaseCandidatePaths} />
-                        <SnapshotRow
-                          label="Kernel Release"
+                          label="Kernel"
                           value={formatValue(snapshot.osContext.kernelRelease)}
-                          bottomSeparator="none"
                         />
-                      </DialogControlsSection>
-
-                      <DialogControlsSection>
-                        <DialogControlsSectionHeader>DeckyZone Status</DialogControlsSectionHeader>
                         <SnapshotRow
-                          label="Current Status"
+                          label="DeckyZone Status"
                           value={formatValue(snapshot.deckyZoneStatus.message)}
                           bottomSeparator="none"
                         />
@@ -218,61 +190,15 @@ const DebugInfoDialog = ({ closeModal }: Props) => {
                   content: (
                     <TabContent>
                       <DialogControlsSection>
-                        <DialogControlsSectionHeader>InputPlumber</DialogControlsSectionHeader>
                         <SnapshotRow label="Available" value={formatBoolean(snapshot.inputPlumber.available)} />
-                        <SnapshotRow
-                          label="Composite Device Object"
-                          value={snapshot.inputPlumber.compositeDeviceObjectPath}
-                        />
                         <SnapshotRow label="Profile Name" value={formatValue(snapshot.inputPlumber.profileName)} />
                         <SnapshotRow
                           label="Profile Path"
                           value={formatValue(snapshot.inputPlumber.profilePath)}
-                          bottomSeparator="none"
                         />
-                      </DialogControlsSection>
-
-                      <DialogControlsSection>
-                        <DialogControlsSectionHeader>Controller HID</DialogControlsSectionHeader>
                         <SnapshotRow
                           label="Zotac HID sysfs config node"
                           value={formatValue(snapshot.zotacZoneKernelDrivers.hidConfigNodePath)}
-                        />
-                        <SnapshotRow
-                          label="Search Root"
-                          value={snapshot.zotacZoneKernelDrivers.hidConfigSearchRoot}
-                          bottomSeparator="none"
-                        />
-                      </DialogControlsSection>
-                    </TabContent>
-                  ),
-                },
-                {
-                  id: 'kernel',
-                  title: 'Kernel',
-                  content: (
-                    <TabContent>
-                      <DialogControlsSection>
-                        <DialogControlsSectionHeader>Zotac Zone Kernel Drivers</DialogControlsSectionHeader>
-                        <SnapshotRow
-                          label="zotac_zone_platform"
-                          value={formatBoolean(snapshot.zotacZoneKernelDrivers.zotacZonePlatformLoaded)}
-                          description={<PathText path={snapshot.zotacZoneKernelDrivers.zotacZonePlatformPath} />}
-                        />
-                        <SnapshotRow
-                          label="zotac_zone_hid"
-                          value={formatBoolean(snapshot.zotacZoneKernelDrivers.zotacZoneHidLoaded)}
-                          description={<PathText path={snapshot.zotacZoneKernelDrivers.zotacZoneHidPath} />}
-                        />
-                        <SnapshotRow
-                          label="firmware_attributes_class"
-                          value={formatBoolean(snapshot.zotacZoneKernelDrivers.firmwareAttributesClassLoaded)}
-                          description={<PathText path={snapshot.zotacZoneKernelDrivers.firmwareAttributesClassPath} />}
-                        />
-                        <SnapshotRow
-                          label="Firmware Attributes Node"
-                          value={formatBoolean(snapshot.zotacZoneKernelDrivers.firmwareAttributesNodePresent)}
-                          description={<PathText path={snapshot.zotacZoneKernelDrivers.firmwareAttributesNodePath} />}
                           bottomSeparator="none"
                         />
                       </DialogControlsSection>
@@ -285,16 +211,23 @@ const DebugInfoDialog = ({ closeModal }: Props) => {
                   content: (
                     <TabContent>
                       <DialogControlsSection>
-                        <DialogControlsSectionHeader>Gamescope</DialogControlsSectionHeader>
                         <SnapshotRow
-                          label="Built-in Zotac OLED Profile"
+                          label="Built-in Profile"
                           value={formatBoolean(snapshot.gamescope.builtInAvailable)}
+                          description={
+                            !snapshot.gamescope.builtInAvailable && snapshot.gamescope.builtInCandidatePaths.length > 0 ? (
+                              <PathDetails paths={snapshot.gamescope.builtInCandidatePaths} />
+                            ) : undefined
+                          }
                         />
-                        <PathList label="Built-in Candidate Paths" paths={snapshot.gamescope.builtInCandidatePaths} />
                         <SnapshotRow
-                          label="Managed DeckyZone Profile"
+                          label="Managed Profile"
                           value={formatBoolean(snapshot.gamescope.managedProfileInstalled)}
-                          description={<PathText path={snapshot.gamescope.managedProfilePath} />}
+                          description={
+                            !snapshot.gamescope.managedProfileInstalled ? (
+                              <PathDetails paths={[snapshot.gamescope.managedProfilePath]} />
+                            ) : undefined
+                          }
                         />
                         <SnapshotRow
                           label="Green Tint Fix"
@@ -303,16 +236,18 @@ const DebugInfoDialog = ({ closeModal }: Props) => {
                         <SnapshotRow
                           label="Verification State"
                           value={formatValue(snapshot.gamescope.verificationState)}
-                        />
-                        <SnapshotRow
-                          label="Base Profile Asset"
-                          value={formatBoolean(snapshot.gamescope.baseAssetAvailable)}
-                          description={<PathText path={snapshot.gamescope.baseAssetPath} />}
-                        />
-                        <SnapshotRow
-                          label="Green Tint Asset"
-                          value={formatBoolean(snapshot.gamescope.greenTintAssetAvailable)}
-                          description={<PathText path={snapshot.gamescope.greenTintAssetPath} />}
+                          description={
+                            !isVerificationHealthy(snapshot.gamescope.verificationState) ||
+                            !snapshot.gamescope.baseAssetAvailable ||
+                            !snapshot.gamescope.greenTintAssetAvailable ? (
+                              <PathDetails
+                                paths={[
+                                  ...(!snapshot.gamescope.baseAssetAvailable ? [snapshot.gamescope.baseAssetPath] : []),
+                                  ...(!snapshot.gamescope.greenTintAssetAvailable ? [snapshot.gamescope.greenTintAssetPath] : []),
+                                ]}
+                              />
+                            ) : undefined
+                          }
                           bottomSeparator="none"
                         />
                       </DialogControlsSection>
@@ -324,13 +259,6 @@ const DebugInfoDialog = ({ closeModal }: Props) => {
           </div>
         )}
       </DialogBody>
-      <DialogFooter>
-        <ControlsList>
-          <DialogButton onClick={() => void loadDebugInfo()} disabled={isLoading} style={{ height: '100%' }}>
-            {isLoading ? 'Reloading' : 'Reload'}
-          </DialogButton>
-        </ControlsList>
-      </DialogFooter>
     </ModalRoot>
   )
 }

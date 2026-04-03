@@ -8,6 +8,10 @@
     --button-menu-image: url("/__deckyzone_glyph_assets__/zotac/zone/Option.png");
     --button-lb-image: url("/__deckyzone_glyph_assets__/zotac/zone/LB.png");
     --button-rb-image: url("/__deckyzone_glyph_assets__/zotac/zone/RB.png");
+    --button-lb-width: 36px;
+    --button-lb-height: 21px;
+    --button-rb-width: 36px;
+    --button-rb-height: 21px;
 
     --button-l4-image: url("/__deckyzone_glyph_assets__/shared/m2-left.svg");
     --button-r4-image: url("/__deckyzone_glyph_assets__/shared/m1-right.svg");
