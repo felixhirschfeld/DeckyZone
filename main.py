@@ -265,6 +265,8 @@ class DeckyZoneService:
                 "managedProfileInstalled": bool(display_profile_settings["gamescopeZotacProfileInstalled"]),
                 "greenTintFixEnabled": bool(display_profile_settings["gamescopeGreenTintFixEnabled"]),
                 "verificationState": display_profile_settings["gamescopeZotacProfileVerificationState"],
+                "baseAssetAvailable": bool(display_profile_settings["gamescopeZotacProfileBaseAssetAvailable"]),
+                "greenTintAssetAvailable": bool(display_profile_settings["gamescopeZotacProfileGreenAssetAvailable"]),
                 **gamescope_paths,
             },
             "deckyZoneStatus": {
@@ -335,18 +337,28 @@ class DeckyZoneService:
             return self.gamescope_display_profiles.get_state()
         except Exception as error:
             self.logger.warning(f"Failed to read Gamescope display profile state: {error}")
+            built_in_candidate_paths = []
+            try:
+                built_in_candidate_paths = list(
+                    self.gamescope_display_profiles.system_profile_paths
+                )
+            except Exception:
+                built_in_candidate_paths = list(
+                    gamescope_display_profiles_module.DEFAULT_SYSTEM_PROFILE_PATHS
+                )
+
+            managed_profile_path = Path(decky.DECKY_USER_HOME) / ".config" / "gamescope" / "scripts" / "zotac.zone.oled.lua"
+            base_asset_path = Path(decky.DECKY_PLUGIN_DIR) / "assets" / "gamescope" / "zotac.zone.oled.lua"
+            green_asset_path = Path(decky.DECKY_PLUGIN_DIR) / "assets" / "gamescope" / "zotac.zone.green-tint.lua"
             return {
-                "gamescopeZotacProfileBuiltIn": False,
-                "gamescopeZotacProfileInstalled": False,
+                "gamescopeZotacProfileBuiltIn": any(path.is_file() for path in built_in_candidate_paths),
+                "gamescopeZotacProfileInstalled": managed_profile_path.is_file(),
                 "gamescopeGreenTintFixEnabled": False,
-                "gamescopeZotacProfileTargetPath": str(
-                    Path(decky.DECKY_USER_HOME)
-                    / ".config"
-                    / "gamescope"
-                    / "scripts"
-                    / "zotac.zone.oled.lua"
-                ),
+                "gamescopeZotacProfileTargetPath": str(managed_profile_path),
                 "gamescopeZotacProfileVerificationState": "error",
+                "gamescopeZotacProfileBaseAssetAvailable": base_asset_path.is_file(),
+                "gamescopeZotacProfileGreenAssetAvailable": green_asset_path.is_file(),
+                "gamescopeZotacProfileAssetsAvailable": base_asset_path.is_file() and green_asset_path.is_file(),
             }
 
     def _get_gamescope_support_path(self, attribute_name, fallback):
@@ -377,6 +389,24 @@ class DeckyZoneService:
                     / "gamescope"
                     / "scripts"
                     / "zotac.zone.oled.lua"
+                ),
+            ),
+            "baseAssetPath": self._get_gamescope_support_path(
+                "base_profile_asset_path",
+                str(
+                    Path(decky.DECKY_PLUGIN_DIR)
+                    / "assets"
+                    / "gamescope"
+                    / "zotac.zone.oled.lua"
+                ),
+            ),
+            "greenTintAssetPath": self._get_gamescope_support_path(
+                "green_profile_asset_path",
+                str(
+                    Path(decky.DECKY_PLUGIN_DIR)
+                    / "assets"
+                    / "gamescope"
+                    / "zotac.zone.green-tint.lua"
                 ),
             ),
         }
@@ -1190,7 +1220,7 @@ class DeckyZoneService:
         if not hidraw_class_path.exists():
             return []
 
-        return sorted(str(path / "device") for path in hidraw_class_path.glob("hidraw*/device"))
+        return sorted(str(path) for path in hidraw_class_path.glob("hidraw*/device"))
 
     def _is_zotac_hid_config_path(self, config_path):
         return Path(config_path, "save_config").is_file()
@@ -1198,7 +1228,7 @@ class DeckyZoneService:
     def _resolve_zotac_hid_config_path(self):
         for config_path in self._get_zotac_hid_config_paths():
             if self._is_zotac_hid_config_path(config_path):
-                return config_path
+                return str(Path(config_path) / ZOTAC_HID_CONFIG_MATCH_MARKER)
 
         return None
 

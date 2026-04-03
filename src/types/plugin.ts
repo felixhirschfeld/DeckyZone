@@ -43,8 +43,12 @@ export type DebugInfoSnapshot = {
     managedProfileInstalled: boolean
     greenTintFixEnabled: boolean
     verificationState: string
+    baseAssetAvailable: boolean
+    greenTintAssetAvailable: boolean
     builtInCandidatePaths: string[]
     managedProfilePath: string
+    baseAssetPath: string
+    greenTintAssetPath: string
   }
   deckyZoneStatus: {
     message: string

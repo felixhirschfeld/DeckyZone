@@ -1,7 +1,7 @@
 import { DialogButton, Focusable, quickAccessMenuClasses, showModal } from '@decky/ui'
 import type { CSSProperties } from 'react'
 import { FaInfoCircle } from 'react-icons/fa'
-import DebugInfoModal from './DebugInfoModal'
+import DebugInfoDialog from './DebugInfoDialog'
 
 const buttonStyle: CSSProperties = {
   height: '28px',
@@ -33,7 +33,7 @@ const QuickAccessTitleView = ({ title }: Props) => {
         onOKActionDescription="Debug Info"
         style={buttonStyle}
         onClick={() => {
-          showModal(<DebugInfoModal />)
+          showModal(<DebugInfoDialog />)
         }}
       >
         <FaInfoCircle size="0.9em" />

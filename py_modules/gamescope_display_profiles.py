@@ -28,6 +28,14 @@ class GamescopeDisplayProfiles:
         return self.plugin_dir / "assets" / "gamescope"
 
     @property
+    def base_profile_asset_path(self):
+        return self.assets_dir / "zotac.zone.oled.lua"
+
+    @property
+    def green_profile_asset_path(self):
+        return self.assets_dir / "zotac.zone.green-tint.lua"
+
+    @property
     def managed_scripts_dir(self):
         return self.user_home / ".config" / "gamescope" / "scripts"
 
@@ -50,14 +58,23 @@ class GamescopeDisplayProfiles:
     def _read_file(self, path):
         return Path(path).read_text(encoding="utf-8")
 
-    def _read_asset(self, filename):
-        return self._read_file(self.assets_dir / filename)
-
     def _expected_base_profile_text(self):
-        return self._read_asset("zotac.zone.oled.lua")
+        return self._read_file(self.base_profile_asset_path)
 
     def _expected_green_profile_text(self):
-        return self._read_asset("zotac.zone.green-tint.lua")
+        return self._read_file(self.green_profile_asset_path)
+
+    def _is_asset_available(self, path):
+        return Path(path).is_file()
+
+    def _asset_state(self):
+        base_available = self._is_asset_available(self.base_profile_asset_path)
+        green_available = self._is_asset_available(self.green_profile_asset_path)
+        return {
+            "gamescopeZotacProfileBaseAssetAvailable": base_available,
+            "gamescopeZotacProfileGreenAssetAvailable": green_available,
+            "gamescopeZotacProfileAssetsAvailable": base_available and green_available,
+        }
 
     def _is_valid_zotac_profile(self, text):
         return ZOTAC_PROFILE_KEY in text and any(
@@ -143,17 +160,26 @@ class GamescopeDisplayProfiles:
         self._cleanup_empty_directories()
 
     def _fallback_state(self, verification_state=PROFILE_VARIANT_ERROR):
+        built_in_available = self._resolve_builtin_profile_path() is not None
+        managed_profile_present = self._is_any_managed_profile_present()
         return {
-            "gamescopeZotacProfileBuiltIn": False,
-            "gamescopeZotacProfileInstalled": verification_state in (
-                PROFILE_VARIANT_BASE,
-                PROFILE_VARIANT_GREEN,
-                PROFILE_VARIANT_UNEXPECTED,
-            ),
+            "gamescopeZotacProfileBuiltIn": built_in_available,
+            "gamescopeZotacProfileInstalled": managed_profile_present,
             "gamescopeGreenTintFixEnabled": verification_state == PROFILE_VARIANT_GREEN,
             "gamescopeZotacProfileTargetPath": str(self.managed_profile_path),
             "gamescopeZotacProfileVerificationState": verification_state,
+            **self._asset_state(),
         }
+
+    def _is_any_managed_profile_present(self):
+        return any(
+            path.is_file()
+            for path in (
+                self.managed_profile_path,
+                self.legacy_managed_base_profile_path,
+                self.legacy_managed_green_tint_profile_path,
+            )
+        )
 
     def _get_managed_profile_verification_state(self):
         if not self.managed_profile_path.is_file():
@@ -164,10 +190,16 @@ class GamescopeDisplayProfiles:
         except OSError:
             return PROFILE_VARIANT_UNEXPECTED
 
-        if text == self._expected_base_profile_text():
+        base_asset_available = self._is_asset_available(self.base_profile_asset_path)
+        green_asset_available = self._is_asset_available(self.green_profile_asset_path)
+
+        if base_asset_available and text == self._expected_base_profile_text():
             return PROFILE_VARIANT_BASE
-        if text == self._expected_green_profile_text():
+        if green_asset_available and text == self._expected_green_profile_text():
             return PROFILE_VARIANT_GREEN
+
+        if not base_asset_available or not green_asset_available:
+            return PROFILE_VARIANT_ERROR
         return PROFILE_VARIANT_UNEXPECTED
 
     def is_builtin_profile_available(self):
@@ -185,15 +217,29 @@ class GamescopeDisplayProfiles:
         return self.is_builtin_profile_available() or self.is_managed_base_profile_installed()
 
     def get_state(self):
+        migration_failed = False
         try:
             self._migrate_legacy_managed_profiles()
+        except OSError:
+            migration_failed = True
+
+        try:
             verification_state = self._get_managed_profile_verification_state()
+            managed_profile_present = self._is_any_managed_profile_present()
+            if (
+                migration_failed
+                and managed_profile_present
+                and verification_state == PROFILE_VARIANT_ABSENT
+            ):
+                verification_state = PROFILE_VARIANT_ERROR
+
             return {
                 "gamescopeZotacProfileBuiltIn": self.is_builtin_profile_available(),
-                "gamescopeZotacProfileInstalled": verification_state != PROFILE_VARIANT_ABSENT,
+                "gamescopeZotacProfileInstalled": managed_profile_present,
                 "gamescopeGreenTintFixEnabled": verification_state == PROFILE_VARIANT_GREEN,
                 "gamescopeZotacProfileTargetPath": str(self.managed_profile_path),
                 "gamescopeZotacProfileVerificationState": verification_state,
+                **self._asset_state(),
             }
         except OSError:
             return self._fallback_state()
