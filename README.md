@@ -12,29 +12,29 @@ DeckyZone is a Decky plugin for the Zotac Gaming Zone that aims to bridge the mo
 
 ### Controller
 
-| Feature                      | SteamOS `main` | Bazzite |
-| ---------------------------- | -------------- | ------- |
-| Enable Controller Features   | ✅             | ❌      |
-| Enable Home Button           | ✅             | ❌      |
-| Enable Brightness Dial       | ✅             | ❌      |
-| Vibration / Rumble Intensity | ✅             | ✅      |
-| Test Rumble                  | ✅             | ❌      |
-| Enable Per-Game Settings     | ✅             | ❌      |
-| Button Prompt Fix            | ✅             | ❌      |
-| Disable Trackpads            | ✅             | ❌      |
+| Feature                      | SteamOS `main` | Bazzite | Nobara | CachyOS |
+| ---------------------------- | -------------- | ------- | ------ | ------- |
+| Enable Controller Features   | ✅             | ❌      | ❓     | ❓      |
+| Enable Home Button           | ✅             | ❌      | ❓     | ❓      |
+| Enable Brightness Dial       | ✅             | ❌      | ❓     | ❓      |
+| Vibration / Rumble Intensity | ✅             | ✅      | ❓     | ❓      |
+| Test Rumble                  | ✅             | ❌      | ❓     | ❓      |
+| Enable Per-Game Settings     | ✅             | ❌      | ❓     | ❓      |
+| Button Prompt Fix            | ✅             | ❌      | ❓     | ❓      |
+| Disable Trackpads            | ✅             | ❌      | ❓     | ❓      |
 
 ### Interface
 
-| Feature              | SteamOS `main` | Bazzite    |
-| -------------------- | -------------- | ---------- |
-| Enable Zotac Glyphs  | ✅             | Not tested |
+| Feature             | SteamOS `main` | Bazzite | Nobara | CachyOS |
+| ------------------- | -------------- | ------- | ------ | ------- |
+| Enable Zotac Glyphs | ✅             | ❓      | ❓     | ❓      |
 
 ### Display
 
-| Feature                   | SteamOS `main` | Bazzite    |
-| ------------------------- | -------------- | ---------- |
-| Enable Zotac OLED Profile | Built in       | Built in   |
-| Enable Green Tint Fix     | ✅             | Not tested |
+| Feature                   | SteamOS `main` | Bazzite | Nobara | CachyOS |
+| ------------------------- | -------------- | ------- | ------ | ------- |
+| Enable Zotac OLED Profile | Built in       | ✅      | ❓     | ❓      |
+| Enable Green Tint Fix     | ✅             | ✅      | ❓     | ❓      |
 
 `HDR / Washed out colors` is fixed out of the box on the latest SteamOS `main` and on the `SteamOS 3.8.1 Preview`. Was also fine on Bazzite, Nobara and CachyOS.
 
