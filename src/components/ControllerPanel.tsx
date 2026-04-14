@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import ControllerTogglesPanel from './controller/ControllerTogglesPanel'
 import PerGameSettingsPanel from './controller/PerGameSettingsPanel'
 import RumblePanel from './controller/RumblePanel'
+import TrackpadPanel from './controller/TrackpadPanel'
 import type { ActiveGame, ControllerMode, PluginSettings, PluginStatus, TrackpadMode } from '../types/plugin'
 import { useDeckyToastNotice } from '../utils/toasts'
 
@@ -336,10 +337,40 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
 
   const handleTrackpadModeChange = async (mode: TrackpadMode) => {
     const appId = activeGame?.appid ?? DEFAULT_APP_ID
+    const previousSettings = settings
+    let optimisticSettings: PluginSettings | null = null
+
+    if (isEditingPerGameOverride && activeGame) {
+      const existingEntry = settings.perGameSettings[activeGame.appid] ?? {
+        enabled: true,
+        buttonPromptFixEnabled: false,
+        trackpadMode: settings.trackpadMode,
+        rumbleEnabled: settings.rumbleEnabled,
+        rumbleIntensity: settings.rumbleIntensity,
+        m1RemapTarget: 'none',
+        m2RemapTarget: 'none',
+      }
+      optimisticSettings = {
+        ...settings,
+        perGameSettings: {
+          ...settings.perGameSettings,
+          [activeGame.appid]: {
+            ...existingEntry,
+            trackpadMode: mode,
+          },
+        },
+      }
+    } else {
+      optimisticSettings = {
+        ...settings,
+        trackpadMode: mode,
+      }
+    }
 
     setControllerNotice(null)
     setPerGameNotice(null)
     setSavingTrackpads(true)
+    onSettingsChange(optimisticSettings)
     try {
       const nextSettings = isEditingPerGameOverride && activeGame
         ? await setPerGameTrackpadMode(activeGame.appid, mode)
@@ -349,6 +380,7 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
       setPerGameNotice(null)
       await syncActiveGameTarget(appId)
     } catch {
+      onSettingsChange(previousSettings)
       if (isEditingPerGameOverride && activeGame) {
         setPerGameNotice(TRACKPADS_ACTION_FAILED_NOTICE)
       } else {
@@ -644,19 +676,21 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
         onButtonPromptFixToggleChange={(value: boolean) => void handleButtonPromptFixToggleChange(value)}
       />
       <RumblePanel
-        inputplumberAvailable={settings.inputplumberAvailable}
-        controllerModeBlocked={controllerModeBlocked}
         rumbleEnabled={activeRumbleEnabled}
         rumbleAvailable={settings.rumbleAvailable}
         savingRumble={savingRumble}
         savingRumbleIntensity={savingRumbleIntensity}
         testingRumble={testingRumble}
-        savingTrackpads={savingTrackpads}
         rumbleIntensityDraft={rumbleIntensityDraft}
-        trackpadMode={activeTrackpadMode}
         onRumbleToggleChange={(value: boolean) => void handleRumbleToggleChange(value)}
         onRumbleIntensityChange={handleRumbleIntensityChange}
         onTestRumble={() => void handleTestRumble()}
+      />
+      <TrackpadPanel
+        inputplumberAvailable={settings.inputplumberAvailable}
+        controllerModeBlocked={controllerModeBlocked}
+        savingTrackpads={savingTrackpads}
+        trackpadMode={activeTrackpadMode}
         onTrackpadModeChange={(value: TrackpadMode) => void handleTrackpadModeChange(value)}
       />
     </PanelSection>
