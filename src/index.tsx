@@ -12,6 +12,7 @@ import DisplayPanel from "./components/DisplayPanel"
 import ErrorBoundary from "./components/ErrorBoundary"
 import InterfacePanel from "./components/InterfacePanel"
 import QuickAccessTitleView from "./components/QuickAccessTitleView"
+import TroubleshootingPanel from "./components/TroubleshootingPanel"
 import UpdatesPanel from "./components/UpdatesPanel"
 import ZotacIcon from "./components/ZotacIcon"
 import { cleanupZotacGlyphsRuntime, syncStoredZotacGlyphsRuntimeEnabled } from "./glyphs/zotacGlyphRuntime"
@@ -383,6 +384,12 @@ function Content() {
         <DisplayPanel
           settings={settings}
           onSettingsChange={applySettingsUpdate}
+        />
+      </ErrorBoundary>
+      <ErrorBoundary title="Troubleshooting">
+        <TroubleshootingPanel
+          onSettingsChange={applySettingsUpdate}
+          onStatusChange={applyStatusUpdate}
         />
       </ErrorBoundary>
       <ErrorBoundary title="Updates">

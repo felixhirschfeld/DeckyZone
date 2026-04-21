@@ -1255,22 +1255,46 @@ class DeckyZoneService:
 
         return self._sync_directional_trackpad_button_runtime(app_id)
 
-    async def _disable_directional_trackpad_source_runtime(self):
+    async def _disable_directional_trackpad_source_runtime_result(
+        self,
+        force_restart=False,
+    ):
         try:
             changed = self._disable_directional_trackpad_source_files()
         except Exception as error:
+            message = f"Failed to remove directional trackpad source files: {error}"
             self.logger.warning(
-                f"Failed to remove directional trackpad source files: {error}"
+                message
             )
-            return False
+            return self._cleanup_step_result(ok=False, message=message)
 
-        if not changed:
-            return self._restore_directional_trackpad_button_mappings()
+        if not changed and not force_restart:
+            restored = self._restore_directional_trackpad_button_mappings()
+            return self._cleanup_step_result(
+                ok=restored,
+                changed=False,
+                message="" if restored else "Failed to restore trackpad mappings.",
+            )
 
         if not await self._restart_inputplumber_after_trackpad_source_update():
-            return False
+            return self._cleanup_step_result(
+                ok=False,
+                changed=changed or force_restart,
+                message="Failed to restart InputPlumber after trackpad cleanup.",
+            )
 
-        return self._restore_directional_trackpad_button_mappings()
+        restored = self._restore_directional_trackpad_button_mappings()
+        return self._cleanup_step_result(
+            ok=restored,
+            changed=changed or force_restart,
+            message="" if restored else "Failed to restore trackpad mappings.",
+        )
+
+    async def _disable_directional_trackpad_source_runtime(self, force_restart=False):
+        result = await self._disable_directional_trackpad_source_runtime_result(
+            force_restart=force_restart
+        )
+        return result["ok"]
 
     def _sync_directional_trackpad_button_runtime(self, app_id=None):
         if self._should_enable_directional_trackpads(app_id):
@@ -1342,6 +1366,54 @@ class DeckyZoneService:
                     f"Failed to restore runtime InputPlumber profile after error: {restore_error}"
                 )
             return False
+
+    def _sanitize_deckyzone_inputplumber_profile_yaml(self, profile_yaml):
+        return runtime_profile_utils.remove_mapping_names(
+            profile_yaml,
+            {
+                RUNTIME_PROFILE_HOME_BUTTON_MAPPING_NAME,
+                RUNTIME_PROFILE_M1_MAPPING_NAME,
+                RUNTIME_PROFILE_M2_MAPPING_NAME,
+            },
+        )
+
+    def _restore_or_sanitize_inputplumber_profiles_for_reset(self):
+        if not self.probe_inputplumber_available():
+            return {
+                "ok": True,
+                "changed": False,
+                "message": "InputPlumber unavailable; skipped live profile restore.",
+            }
+
+        changed = False
+        if self._home_button_override_active:
+            self._restore_home_button_profile()
+            changed = True
+
+        if self._runtime_input_profile_active:
+            self._restore_runtime_input_profile()
+            changed = True
+
+        current_profile_path = self._get_inputplumber_profile_path() or ""
+        managed_profile_paths = {
+            str(self._get_runtime_inputplumber_profile_path()),
+            str(self._get_home_button_override_profile_path()),
+        }
+
+        if current_profile_path in managed_profile_paths:
+            self._load_inputplumber_profile_path(DEFAULT_INPUTPLUMBER_PROFILE_PATH)
+            changed = True
+        else:
+            current_profile_yaml = self._get_inputplumber_profile_yaml()
+            sanitized_profile_yaml = self._sanitize_deckyzone_inputplumber_profile_yaml(
+                current_profile_yaml
+            )
+            if sanitized_profile_yaml != current_profile_yaml:
+                self._load_inputplumber_profile_from_yaml(sanitized_profile_yaml)
+                changed = True
+
+        self._reset_inputplumber_profile_state()
+        return {"ok": True, "changed": changed, "message": ""}
 
     def set_per_game_m1_remap_target(self, app_id, target):
         if app_id in (None, "", DEFAULT_APP_ID):
@@ -3057,6 +3129,223 @@ class DeckyZoneService:
         self._set_status("applied", f"Startup mode re-applied: {STARTUP_MODE}.")
         return self.get_status()
 
+    def _cleanup_step_result(self, ok=True, changed=False, message=""):
+        return {
+            "ok": bool(ok),
+            "changed": bool(changed),
+            "message": str(message or ""),
+        }
+
+    def _normalize_cleanup_step_result(self, name, result):
+        if isinstance(result, dict):
+            return {
+                "name": name,
+                "ok": bool(result.get("ok", True)),
+                "changed": bool(result.get("changed", False)),
+                "message": str(result.get("message") or ""),
+            }
+
+        if isinstance(result, bool):
+            return {
+                "name": name,
+                "ok": result,
+                "changed": False,
+                "message": "" if result else "Action reported failure.",
+            }
+
+        return {
+            "name": name,
+            "ok": True,
+            "changed": False,
+            "message": "",
+        }
+
+    async def _run_cleanup_step(self, steps, name, action):
+        try:
+            result = action()
+            if asyncio.iscoroutine(result):
+                result = await result
+            step = self._normalize_cleanup_step_result(name, result)
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or error.stdout or str(error)).strip()
+            step = {
+                "name": name,
+                "ok": False,
+                "changed": False,
+                "message": detail,
+            }
+        except Exception as error:
+            step = {
+                "name": name,
+                "ok": False,
+                "changed": False,
+                "message": str(error),
+            }
+
+        steps.append(step)
+        if not step["ok"]:
+            self.logger.warning(
+                f"Reset cleanup step failed: {name}: {step['message']}"
+            )
+        return step
+
+    def _reset_runtime_flags_for_reset(self):
+        changed = any(
+            (
+                self._startup_applied_this_session,
+                self._startup_target_active,
+                self._temporary_target_mode is not None,
+                self._active_per_game_app_id != DEFAULT_APP_ID,
+            )
+        )
+        self._startup_applied_this_session = False
+        self._startup_target_active = False
+        self._temporary_target_mode = None
+        self._active_per_game_app_id = DEFAULT_APP_ID
+        return self._cleanup_step_result(changed=changed)
+
+    def _release_zotac_mouse_device_for_reset(self):
+        changed = self._zotac_mouse_device_fd is not None
+        released = self._release_zotac_mouse_device()
+        return self._cleanup_step_result(
+            ok=released,
+            changed=changed,
+            message="" if released else "Failed to release Zotac mouse input device.",
+        )
+
+    async def _remove_directional_trackpad_runtime_for_reset(
+        self,
+        force_restart=False,
+    ):
+        result = await self._disable_directional_trackpad_source_runtime_result(
+            force_restart=force_restart
+        )
+        if not result["ok"] and not result["message"]:
+            result["message"] = "Failed to restore directional trackpad runtime."
+        return result
+
+    def _remove_plugin_runtime_files(self):
+        changed = False
+        runtime_dir = Path(decky.DECKY_PLUGIN_RUNTIME_DIR)
+        for filename in (
+            RUNTIME_INPUTPLUMBER_PROFILE_FILENAME,
+            HOME_BUTTON_OVERRIDE_PROFILE_FILENAME,
+            DIRECTIONAL_TRACKPAD_BACKUP_FILENAME,
+        ):
+            path = runtime_dir / filename
+            if not path.exists():
+                continue
+            if path.is_dir():
+                raise IsADirectoryError(str(path))
+            path.unlink()
+            changed = True
+
+        self._directional_trackpad_backup = None
+
+        try:
+            runtime_dir.rmdir()
+        except OSError:
+            pass
+
+        return self._cleanup_step_result(changed=changed)
+
+    def _get_managed_gamescope_profile_paths(self):
+        paths = []
+        for attribute_name in (
+            "managed_profile_path",
+            "legacy_managed_green_tint_profile_path",
+            "legacy_managed_base_profile_path",
+        ):
+            path = getattr(self.gamescope_display_profiles, attribute_name, None)
+            if path is not None:
+                paths.append(Path(path))
+        return paths
+
+    def _cleanup_gamescope_display_profiles_for_reset(self):
+        changed = any(
+            path.exists() for path in self._get_managed_gamescope_profile_paths()
+        )
+        self.gamescope_display_profiles.cleanup_managed_files()
+        return self._cleanup_step_result(changed=changed)
+
+    def _reset_settings_for_reset(self):
+        self.settings_store.reset_settings()
+        return self._cleanup_step_result(changed=True)
+
+    async def reset_plugin_state(self):
+        steps = []
+        force_inputplumber_restart = bool(
+            self._startup_target_active
+            or self._temporary_target_mode is not None
+        )
+
+        await self._run_cleanup_step(
+            steps,
+            "stopControllerModeMonitor",
+            self.stop_controller_mode_monitor,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "resetRuntimeFlags",
+            self._reset_runtime_flags_for_reset,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "stopHomeButtonListener",
+            self.stop_home_button_listener,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "restoreInputPlumberProfile",
+            self._restore_or_sanitize_inputplumber_profiles_for_reset,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "stopBrightnessDialFixer",
+            self.stop_brightness_dial_fixer,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "releaseTrackpadMouseGrab",
+            self._release_zotac_mouse_device_for_reset,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "removeDirectionalTrackpadRuntime",
+            lambda: self._remove_directional_trackpad_runtime_for_reset(
+                force_restart=force_inputplumber_restart
+            ),
+        )
+        await self._run_cleanup_step(
+            steps,
+            "stopRumbleFixer",
+            self.stop_rumble_fixer,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "removeRuntimeFiles",
+            self._remove_plugin_runtime_files,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "removeGamescopeDisplayProfiles",
+            self._cleanup_gamescope_display_profiles_for_reset,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "resetSettings",
+            self._reset_settings_for_reset,
+        )
+
+        self._set_status("disabled", DISABLED_MESSAGE)
+        ok = all(step["ok"] for step in steps)
+        return {
+            "ok": ok,
+            "settings": self.get_settings(),
+            "status": self.get_status(),
+            "steps": steps,
+        }
+
     async def cleanup(self):
         await self.stop_controller_mode_monitor()
         self._startup_target_active = False
@@ -3075,6 +3364,77 @@ class Plugin:
         self.startup_task = None
         self.service = service or DeckyZoneService()
 
+    async def _cancel_startup_task(self):
+        step = {
+            "name": "cancelStartupTask",
+            "ok": True,
+            "changed": False,
+            "message": "",
+        }
+        if self.startup_task is None:
+            return step
+
+        if self.startup_task.done():
+            self.startup_task = None
+            return step
+
+        step["changed"] = True
+        self.startup_task.cancel()
+        try:
+            await self.startup_task
+        except asyncio.CancelledError:
+            pass
+        except Exception as error:
+            step["ok"] = False
+            step["message"] = str(error)
+            decky.logger.warning(f"Failed to cancel startup apply task: {error}")
+        finally:
+            self.startup_task = None
+
+        return step
+
+    async def _reset_plugin_cleanup(self):
+        startup_step = await self._cancel_startup_task()
+        if hasattr(self.service, "reset_plugin_state"):
+            result = await self.service.reset_plugin_state()
+        else:
+            if hasattr(self.service, "cleanup"):
+                await self.service.cleanup()
+            else:
+                if hasattr(self.service, "stop_brightness_dial_fixer"):
+                    await self.service.stop_brightness_dial_fixer()
+                await self.service.stop_rumble_fixer()
+            if hasattr(self.service, "remove_gamescope_display_profiles"):
+                self.service.remove_gamescope_display_profiles()
+            plugin_settings.reset_settings()
+            result = {
+                "ok": True,
+                "settings": self.service.get_settings(),
+                "status": self.service.get_status(),
+                "steps": [],
+            }
+
+        steps = [startup_step, *result.get("steps", [])]
+        result["steps"] = steps
+        result["ok"] = bool(startup_step["ok"] and result.get("ok", True))
+        return result
+
+    def _log_cleanup_result(self, action_name, result):
+        decky.logger.info(
+            f"DeckyZone {action_name} cleanup finished: ok={result.get('ok')}"
+        )
+        for step in result.get("steps", []):
+            message = step.get("message") or ""
+            changed = step.get("changed")
+            if step.get("ok"):
+                decky.logger.info(
+                    f"DeckyZone cleanup step {step.get('name')}: ok changed={changed}"
+                )
+            else:
+                decky.logger.warning(
+                    f"DeckyZone cleanup step {step.get('name')}: failed {message}"
+                )
+
     async def get_status(self):
         return self.service.get_status()
 
@@ -3083,6 +3443,11 @@ class Plugin:
 
     async def get_debug_info(self):
         return self.service.get_debug_info()
+
+    async def reset_plugin(self):
+        result = await self._reset_plugin_cleanup()
+        self._log_cleanup_result("reset", result)
+        return result
 
     async def set_startup_apply_enabled(self, enabled):
         if not enabled and self.startup_task and not self.startup_task.done():
@@ -3201,12 +3566,7 @@ class Plugin:
 
     async def _unload(self):
         decky.logger.info("DeckyZone stopping")
-        if self.startup_task and not self.startup_task.done():
-            self.startup_task.cancel()
-            try:
-                await self.startup_task
-            except asyncio.CancelledError:
-                pass
+        await self._cancel_startup_task()
         await self.service.stop_controller_mode_monitor()
         if hasattr(self.service, "cleanup"):
             await self.service.cleanup()
@@ -3217,15 +3577,8 @@ class Plugin:
 
     async def _uninstall(self):
         decky.logger.info("DeckyZone uninstall")
-        if hasattr(self.service, "cleanup"):
-            await self.service.cleanup()
-        else:
-            if hasattr(self.service, "stop_brightness_dial_fixer"):
-                await self.service.stop_brightness_dial_fixer()
-            await self.service.stop_rumble_fixer()
-        if hasattr(self.service, "remove_gamescope_display_profiles"):
-            self.service.remove_gamescope_display_profiles()
-        plugin_settings.reset_settings()
+        result = await self._reset_plugin_cleanup()
+        self._log_cleanup_result("uninstall", result)
 
     async def _migration(self):
         decky.logger.info("Migrating DeckyZone")

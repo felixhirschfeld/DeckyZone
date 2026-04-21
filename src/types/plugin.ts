@@ -6,6 +6,13 @@ export type PluginStatus = {
 export type ControllerMode = 'gamepad' | 'desktop'
 export type TrackpadMode = 'default' | 'disabled' | 'directional_buttons'
 
+export type CleanupStepResult = {
+  name: string
+  ok: boolean
+  changed: boolean
+  message: string
+}
+
 export type PerGameRemapTarget =
   | 'none'
   | 'a'
@@ -122,4 +129,11 @@ export type PluginSettings = {
   rumbleIntensity: number
   rumbleAvailable: boolean
   perGameSettings: Record<string, PerGameSettings>
+}
+
+export type PluginResetResult = {
+  ok: boolean
+  settings: PluginSettings
+  status: PluginStatus
+  steps: CleanupStepResult[]
 }
