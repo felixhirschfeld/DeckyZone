@@ -3,15 +3,15 @@
     --controller-left-image: url("/__deckyzone_glyph_assets__/zotac/zone/controller-left.png");
     --controller-right-image: url("/__deckyzone_glyph_assets__/zotac/zone/controller-right.png");
 
-    --button-guide-image: url("/__deckyzone_glyph_assets__/zotac/zone/GamepadMenu.png");
+    --button-guide-image: url("/__deckyzone_glyph_assets__/zotac/zone/guide.svg");
     --button-view-image: url("/__deckyzone_glyph_assets__/shared/view.svg");
-    --button-menu-image: url("/__deckyzone_glyph_assets__/zotac/zone/Option.png");
-    --button-lb-image: url("/__deckyzone_glyph_assets__/zotac/zone/LB.png");
-    --button-rb-image: url("/__deckyzone_glyph_assets__/zotac/zone/RB.png");
+    --button-menu-image: url("/__deckyzone_glyph_assets__/zotac/zone/menu.svg");
+    --button-lb-image: url("/__deckyzone_glyph_assets__/zotac/zone/lb.svg");
+    --button-rb-image: url("/__deckyzone_glyph_assets__/zotac/zone/rb.svg");
     --button-lb-width: 36px;
-    --button-lb-height: 21px;
+    --button-lb-height: 22px;
     --button-rb-width: 36px;
-    --button-rb-height: 21px;
+    --button-rb-height: 22px;
 
     --button-l4-image: url("/__deckyzone_glyph_assets__/shared/m2-left.svg");
     --button-r4-image: url("/__deckyzone_glyph_assets__/shared/m1-right.svg");
