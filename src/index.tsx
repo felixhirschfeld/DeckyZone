@@ -281,10 +281,17 @@ function areGamesEqual(left: ActiveGame | null, right: ActiveGame | null) {
 
 async function syncActiveGameTarget(appId: string) {
   try {
-    await syncPerGameTarget(appId)
+    const synced = await syncPerGameTarget(appId)
+    if (!synced) {
+      return null
+    }
+    const nextStatus = await getStatus()
+    cacheBootstrapStatus(nextStatus)
+    return nextStatus
   } catch (error) {
     console.error('Failed to sync per-game target', error)
   }
+  return null
 }
 
 function Content() {
@@ -311,6 +318,14 @@ function Content() {
     setBootstrap(getBootstrapState())
     setStatus(nextStatus)
     setSettings(nextSettings)
+  }
+
+  const refreshStatusAfterActiveGameSync = (appId: string) => {
+    void syncActiveGameTarget(appId).then((nextStatus) => {
+      if (nextStatus) {
+        applyStatusUpdate(nextStatus)
+      }
+    })
   }
 
   const handleResetPlugin = async () => {
@@ -356,6 +371,7 @@ function Content() {
     syncBootstrapIntoLocalState()
     void startBootstrap().then(() => {
       syncBootstrapIntoLocalState()
+      refreshStatusAfterActiveGameSync(RunningApps.active())
     })
     setActiveGame((currentGame) => {
       const nextActiveGame = RunningApps.activeAppInfo() ?? getActiveGame()
@@ -363,6 +379,7 @@ function Content() {
     })
     const unregisterActiveGameListener = RunningApps.listenActiveChange((nextActiveGame) => {
       setActiveGame((currentGame) => (areGamesEqual(currentGame, nextActiveGame) ? currentGame : nextActiveGame))
+      refreshStatusAfterActiveGameSync(nextActiveGame?.appid ?? DEFAULT_APP_ID)
     })
 
     return () => {

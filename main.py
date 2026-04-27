@@ -69,6 +69,13 @@ DISABLED_REBOOT_MESSAGE = (
     "Startup mode apply is disabled. Reboot to restore unmodified InputPlumber startup behavior."
 )
 GAMEPAD_MODE_REQUIRED_MESSAGE = "Gamepad mode is required for controller features."
+CONTROLLER_RUNTIME_RECOVERED_MESSAGE = "Controller runtime recovered."
+RECOVERABLE_CONTROLLER_STATUS_FAILURE_DETAILS = (
+    "InputPlumber target devices did not settle",
+    "InputPlumber target gamepad device did not appear",
+    "Startup runtime did not reach keyboard/profile-ready state.",
+    "Home button runtime profile did not activate.",
+)
 READY_TIMEOUT_SECONDS = 5.0
 READY_POLL_INTERVAL_SECONDS = 0.5
 STARTUP_APPLY_ATTEMPTS = 3
@@ -78,6 +85,7 @@ STARTUP_RUNTIME_READY_POLL_INTERVAL_SECONDS = 0.25
 CONTROLLER_MODE_MONITOR_INTERVAL_SECONDS = 2.0
 DEFAULT_APP_ID = "0"
 STARTUP_MODE = "deck-uhid"
+STARTUP_MODE_APPLIED_MESSAGE = f"Startup mode re-applied: {STARTUP_MODE}."
 MISSING_GLYPH_FIX_TARGET = "xbox-elite"
 PER_GAME_REMAP_NONE = "none"
 PER_GAME_REMAP_SOURCE_BUTTON_M1 = "LeftPaddle1"
@@ -253,7 +261,105 @@ class DeckyZoneService:
         self._libc = ctypes.CDLL(ctypes.util.find_library("c") or None, use_errno=True)
 
     def get_status(self):
+        self._clear_recovered_controller_status()
         return dict(self._status)
+
+    def _is_recoverable_controller_status_failure(self):
+        if self._status.get("state") != "failed":
+            return False
+
+        message = str(self._status.get("message") or "")
+        if message.startswith("InputPlumber D-Bus was not ready within "):
+            return True
+
+        prefix = "Failed to apply startup mode: "
+        if not message.startswith(prefix):
+            return False
+
+        detail = message[len(prefix) :]
+        return any(
+            detail.startswith(recoverable_detail)
+            for recoverable_detail in RECOVERABLE_CONTROLLER_STATUS_FAILURE_DETAILS
+        )
+
+    def _is_active_button_prompt_fix_enabled(self):
+        app_id = str(self._active_per_game_app_id or DEFAULT_APP_ID)
+        return bool(
+            app_id != DEFAULT_APP_ID
+            and self.settings_store.get_per_game_settings_enabled(app_id)
+            and self.settings_store.get_button_prompt_fix_enabled(app_id)
+        )
+
+    def _get_current_controller_target_mode(self):
+        if self._is_active_button_prompt_fix_enabled():
+            return MISSING_GLYPH_FIX_TARGET
+
+        return STARTUP_MODE
+
+    def _resolve_controller_target_gamepad_device_path(self, target_mode):
+        return self._resolve_input_device_path_by_match(
+            lambda device_name: controller_targets.is_target_gamepad_device_name(
+                target_mode,
+                device_name,
+            )
+        )
+
+    def _is_current_controller_runtime_healthy(self):
+        if not self.settings_store.get_startup_apply_enabled():
+            return False
+
+        if not self.probe_inputplumber_available():
+            return False
+
+        controller_mode_snapshot = self._get_controller_mode_snapshot()
+        if not self._is_controller_mode_snapshot_safe(controller_mode_snapshot):
+            return False
+
+        target_mode = self._get_current_controller_target_mode()
+        target_paths = self._get_inputplumber_target_device_paths()
+        expected_target_count = len(
+            controller_targets.build_target_devices(
+                target_mode,
+                include_mouse=self._should_include_mouse_target(),
+            )
+        )
+        if len(target_paths) < expected_target_count:
+            return False
+
+        if not self._resolve_controller_target_gamepad_device_path(target_mode):
+            return False
+
+        if not self._resolve_inputplumber_keyboard_device_path():
+            return False
+
+        if self.settings_store.get_home_button_enabled():
+            return self._get_inputplumber_profile_path() == str(
+                self._get_home_button_override_profile_path()
+            )
+
+        if self._should_enable_runtime_input_profile(self._active_per_game_app_id):
+            return self._get_inputplumber_profile_path() == str(
+                self._get_runtime_inputplumber_profile_path()
+            )
+
+        return True
+
+    def _clear_recovered_controller_status(self):
+        if not self._is_recoverable_controller_status_failure():
+            return
+
+        previous_message = str(self._status.get("message") or "")
+        try:
+            if not self._is_current_controller_runtime_healthy():
+                return
+        except Exception as error:
+            self.logger.warning(f"Failed to check recovered controller runtime: {error}")
+            return
+
+        self._set_status("applied", CONTROLLER_RUNTIME_RECOVERED_MESSAGE)
+        self.logger.info(
+            f"Cleared recovered controller startup failure: {previous_message}"
+        )
 
     def get_settings(self):
         self._inputplumber_available = bool(self.probe_inputplumber_available())
@@ -2622,7 +2728,7 @@ class DeckyZoneService:
         self._startup_applied_this_session = True
         self._temporary_target_mode = None
         if update_status:
-            self._set_status("applied", f"Startup mode re-applied: {STARTUP_MODE}.")
+            self._set_status("applied", STARTUP_MODE_APPLIED_MESSAGE)
         return controller_mode_snapshot
 
     async def _controller_mode_monitor_loop(self):
@@ -3132,7 +3238,7 @@ class DeckyZoneService:
 
         self._startup_applied_this_session = True
         self._temporary_target_mode = None
-        self._set_status("applied", f"Startup mode re-applied: {STARTUP_MODE}.")
+        self._set_status("applied", STARTUP_MODE_APPLIED_MESSAGE)
         return self.get_status()
 
     def _cleanup_step_result(self, ok=True, changed=False, message=""):

@@ -6,6 +6,12 @@ STARTUP_TARGET_GAMEPAD_DEVICE_NAMES = frozenset(
     }
 )
 STARTUP_TARGET_GAMEPAD_DEVICE_PREFIXES = ("Microsoft X-Box 360 pad",)
+MISSING_GLYPH_FIX_TARGET_MODE = "xbox-elite"
+MISSING_GLYPH_FIX_TARGET_GAMEPAD_DEVICE_NAMES = frozenset(
+    {
+        "Microsoft X-Box One Elite pad",
+    }
+)
 
 
 def build_target_devices(target_mode, include_keyboard=True, include_mouse=True):
@@ -45,3 +51,10 @@ def describe_startup_target_gamepad_names():
         f"{prefix}*" for prefix in STARTUP_TARGET_GAMEPAD_DEVICE_PREFIXES
     )
     return ", ".join(part for part in (exact_names, prefix_names) if part)
+
+
+def is_target_gamepad_device_name(target_mode, device_name):
+    if target_mode == MISSING_GLYPH_FIX_TARGET_MODE:
+        return device_name in MISSING_GLYPH_FIX_TARGET_GAMEPAD_DEVICE_NAMES
+
+    return is_startup_target_gamepad_device_name(device_name)
