@@ -146,6 +146,27 @@ KEY_HOME_SHORT_PRESS = 188
 KEY_HOME_LONG_PRESS = 189
 
 
+def _log_cleanup_step(logger, step):
+    elapsed = step.get("elapsedSeconds")
+    elapsed_text = ""
+    if isinstance(elapsed, (int, float)):
+        elapsed_text = f" elapsed={elapsed:.3f}s"
+
+    message = step.get("message") or ""
+    message_text = f" message={message}" if message else ""
+    status = "ok=True" if step.get("ok") else "ok=False"
+    changed = step.get("changed")
+    log_message = (
+        f"DeckyZone cleanup step {step.get('name')} finished: "
+        f"{status} changed={changed}{elapsed_text}{message_text}"
+    )
+
+    if step.get("ok"):
+        logger.info(log_message)
+    else:
+        logger.warning(log_message)
+
+
 class _TimeVal(ctypes.Structure):
     _fields_ = [("tv_sec", ctypes.c_long), ("tv_usec", ctypes.c_long)]
 
@@ -1011,8 +1032,32 @@ class DeckyZoneService:
         capability_map_changed = self._remove_directional_trackpad_capability_map()
         return capability_map_changed or device_override_changed
 
+    def _has_directional_trackpad_source_files(self):
+        return (
+            (
+                MANAGED_INPUTPLUMBER_DEVICES_DIR
+                / MANAGED_DIRECTIONAL_TRACKPAD_DEVICE_OVERRIDE_FILENAME
+            ).exists()
+            or (
+                MANAGED_INPUTPLUMBER_CAPABILITY_MAPS_DIR
+                / MANAGED_DIRECTIONAL_TRACKPAD_CAPABILITY_MAP_FILENAME
+            ).exists()
+        )
+
     def _get_directional_trackpad_backup_path(self):
         return Path(decky.DECKY_PLUGIN_RUNTIME_DIR) / DIRECTIONAL_TRACKPAD_BACKUP_FILENAME
+
+    def _has_directional_trackpad_backup(self):
+        if self._directional_trackpad_backup is not None:
+            return True
+
+        return self._get_directional_trackpad_backup_path().is_file()
+
+    def _has_directional_trackpad_runtime_state(self):
+        return (
+            self._has_directional_trackpad_backup()
+            or self._has_directional_trackpad_source_files()
+        )
 
     def _load_directional_trackpad_backup(self):
         if self._directional_trackpad_backup is not None:
@@ -1364,8 +1409,11 @@ class DeckyZoneService:
     async def _disable_directional_trackpad_source_runtime_result(
         self,
         force_restart=False,
+        restore_only_with_runtime_state=False,
     ):
+        had_runtime_state = False
         try:
+            had_runtime_state = self._has_directional_trackpad_runtime_state()
             changed = self._disable_directional_trackpad_source_files()
         except Exception as error:
             message = f"Failed to remove directional trackpad source files: {error}"
@@ -1375,6 +1423,12 @@ class DeckyZoneService:
             return self._cleanup_step_result(ok=False, message=message)
 
         if not changed and not force_restart:
+            if restore_only_with_runtime_state and not had_runtime_state:
+                return self._cleanup_step_result(
+                    ok=True,
+                    changed=False,
+                    message="No directional trackpad runtime state; skipped HID restore.",
+                )
             restored = self._restore_directional_trackpad_button_mappings()
             return self._cleanup_step_result(
                 ok=restored,
@@ -1813,6 +1867,35 @@ class DeckyZoneService:
             raise OSError("Incomplete input event read.")
         return _InputEvent.from_buffer_copy(raw_event)
 
+    async def _cancel_task(self, task, timeout=None):
+        if task is None or task.done():
+            return True
+
+        task.cancel()
+        if timeout is None:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception as error:
+                self.logger.warning(f"Task cleanup failed: {error}")
+                return False
+            return True
+
+        done, pending = await asyncio.wait({task}, timeout=timeout)
+        if pending:
+            return False
+
+        completed_task = next(iter(done))
+        try:
+            completed_task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as error:
+            self.logger.warning(f"Task cleanup failed: {error}")
+            return False
+        return True
+
     def _get_brightness_dial_direction(self, event):
         if event.type == EV_REL:
             # The Zotac source dials device emits the right dial as REL_WHEEL
@@ -1914,19 +1997,35 @@ class DeckyZoneService:
         self._home_button_task = asyncio.create_task(self._home_button_loop())
         return True
 
-    async def stop_home_button_listener(self):
+    async def _stop_home_button_listener(self, timeout=None):
         self._home_button_running = False
 
         if self._home_button_task and not self._home_button_task.done():
-            self._home_button_task.cancel()
-            try:
-                await self._home_button_task
-            except asyncio.CancelledError:
-                pass
+            stopped = await self._cancel_task(self._home_button_task, timeout=timeout)
+            if not stopped:
+                return False
 
         self._home_button_task = None
         self._home_button_device_path = None
         return True
+
+    async def stop_home_button_listener(self):
+        return await self._stop_home_button_listener()
+
+    async def stop_home_button_listener_for_unload(self):
+        changed = self._home_button_task is not None and not self._home_button_task.done()
+        self._home_button_running = False
+        self._home_button_task = None
+        self._home_button_device_path = None
+        return self._cleanup_step_result(
+            ok=True,
+            changed=changed,
+            message=(
+                ""
+                if not changed
+                else "Home button listener stop requested without waiting."
+            ),
+        )
 
     async def _enable_home_button_navigation(self):
         try:
@@ -2972,19 +3071,41 @@ class DeckyZoneService:
         self._brightness_dial_task = asyncio.create_task(self._brightness_dial_loop())
         return True
 
-    async def stop_brightness_dial_fixer(self):
+    async def _stop_brightness_dial_fixer(self, timeout=None):
         self._brightness_dial_running = False
 
         if self._brightness_dial_task and not self._brightness_dial_task.done():
-            self._brightness_dial_task.cancel()
-            try:
-                await self._brightness_dial_task
-            except asyncio.CancelledError:
-                pass
+            stopped = await self._cancel_task(
+                self._brightness_dial_task,
+                timeout=timeout,
+            )
+            if not stopped:
+                return False
 
         self._brightness_dial_task = None
         self._brightness_dial_device_path = None
         return True
+
+    async def stop_brightness_dial_fixer(self):
+        return await self._stop_brightness_dial_fixer()
+
+    async def stop_brightness_dial_fixer_for_unload(self):
+        changed = (
+            self._brightness_dial_task is not None
+            and not self._brightness_dial_task.done()
+        )
+        self._brightness_dial_running = False
+        self._brightness_dial_task = None
+        self._brightness_dial_device_path = None
+        return self._cleanup_step_result(
+            ok=True,
+            changed=changed,
+            message=(
+                ""
+                if not changed
+                else "Brightness dial listener stop requested without waiting."
+            ),
+        )
 
     async def set_brightness_dial_fix_enabled(self, enabled):
         if enabled and not self.settings_store.get_startup_apply_enabled():
@@ -3074,18 +3195,33 @@ class DeckyZoneService:
         self._rumble_task = asyncio.create_task(self._rumble_loop())
         return True
 
-    async def stop_rumble_fixer(self):
+    async def _stop_rumble_fixer(self, timeout=None):
         self._rumble_running = False
 
         if self._rumble_task and not self._rumble_task.done():
-            self._rumble_task.cancel()
-            try:
-                await self._rumble_task
-            except asyncio.CancelledError:
-                pass
+            stopped = await self._cancel_task(self._rumble_task, timeout=timeout)
+            if not stopped:
+                return False
 
         self._rumble_task = None
         return True
+
+    async def stop_rumble_fixer(self):
+        return await self._stop_rumble_fixer()
+
+    async def stop_rumble_fixer_for_unload(self):
+        changed = self._rumble_task is not None and not self._rumble_task.done()
+        self._rumble_running = False
+        self._rumble_task = None
+        return self._cleanup_step_result(
+            ok=True,
+            changed=changed,
+            message=(
+                ""
+                if not changed
+                else "Rumble fixer stop requested without waiting."
+            ),
+        )
 
     async def set_rumble_enabled(self, enabled):
         self.settings_store.set_rumble_enabled(enabled)
@@ -3273,6 +3409,8 @@ class DeckyZoneService:
         }
 
     async def _run_cleanup_step(self, steps, name, action):
+        self.logger.info(f"DeckyZone cleanup step {name} starting")
+        started_at = time.monotonic()
         try:
             result = action()
             if asyncio.iscoroutine(result):
@@ -3294,11 +3432,9 @@ class DeckyZoneService:
                 "message": str(error),
             }
 
+        step["elapsedSeconds"] = time.monotonic() - started_at
         steps.append(step)
-        if not step["ok"]:
-            self.logger.warning(
-                f"Reset cleanup step failed: {name}: {step['message']}"
-            )
+        _log_cleanup_step(self.logger, step)
         return step
 
     def _reset_runtime_flags_for_reset(self):
@@ -3316,7 +3452,7 @@ class DeckyZoneService:
         self._active_per_game_app_id = DEFAULT_APP_ID
         return self._cleanup_step_result(changed=changed)
 
-    def _release_zotac_mouse_device_for_reset(self):
+    def _release_zotac_mouse_device_cleanup_result(self):
         changed = self._zotac_mouse_device_fd is not None
         released = self._release_zotac_mouse_device()
         return self._cleanup_step_result(
@@ -3324,6 +3460,50 @@ class DeckyZoneService:
             changed=changed,
             message="" if released else "Failed to release Zotac mouse input device.",
         )
+
+    def _release_zotac_mouse_device_for_reset(self):
+        return self._release_zotac_mouse_device_cleanup_result()
+
+    def _reset_runtime_flags_for_unload(self):
+        changed = any(
+            (
+                self._startup_target_active,
+                self._temporary_target_mode is not None,
+                self._active_per_game_app_id != DEFAULT_APP_ID,
+            )
+        )
+        self._startup_target_active = False
+        self._temporary_target_mode = None
+        self._active_per_game_app_id = DEFAULT_APP_ID
+        return self._cleanup_step_result(changed=changed)
+
+    def _restore_inputplumber_profiles_for_unload(self):
+        if not self.probe_inputplumber_available():
+            return self._cleanup_step_result(
+                ok=True,
+                changed=False,
+                message="InputPlumber unavailable; skipped live profile restore.",
+            )
+
+        changed = False
+        if self._home_button_override_active:
+            self._restore_home_button_profile()
+            changed = True
+
+        if self._runtime_input_profile_active:
+            self._restore_runtime_input_profile()
+            changed = True
+
+        self._reset_inputplumber_profile_state()
+        return self._cleanup_step_result(changed=changed)
+
+    async def _remove_directional_trackpad_runtime_for_unload(self):
+        result = await self._disable_directional_trackpad_source_runtime_result(
+            restore_only_with_runtime_state=True
+        )
+        if not result["ok"] and not result["message"]:
+            result["message"] = "Failed to restore directional trackpad runtime."
+        return result
 
     async def _remove_directional_trackpad_runtime_for_reset(
         self,
@@ -3458,16 +3638,56 @@ class DeckyZoneService:
             "steps": steps,
         }
 
+    async def cleanup_for_unload(self):
+        steps = []
+        await self._run_cleanup_step(
+            steps,
+            "stopControllerModeMonitor",
+            self.stop_controller_mode_monitor,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "resetRuntimeFlags",
+            self._reset_runtime_flags_for_unload,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "stopHomeButtonListener",
+            self.stop_home_button_listener_for_unload,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "restoreInputPlumberProfile",
+            self._restore_inputplumber_profiles_for_unload,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "stopBrightnessDialFixer",
+            self.stop_brightness_dial_fixer_for_unload,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "releaseTrackpadMouseGrab",
+            self._release_zotac_mouse_device_cleanup_result,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "removeDirectionalTrackpadRuntime",
+            self._remove_directional_trackpad_runtime_for_unload,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "stopRumbleFixer",
+            self.stop_rumble_fixer_for_unload,
+        )
+
+        return {
+            "ok": all(step["ok"] for step in steps),
+            "steps": steps,
+        }
+
     async def cleanup(self):
-        await self.stop_controller_mode_monitor()
-        self._startup_target_active = False
-        self._temporary_target_mode = None
-        self._active_per_game_app_id = DEFAULT_APP_ID
-        await self._sync_home_button_navigation_state()
-        await self.stop_brightness_dial_fixer()
-        self._release_zotac_mouse_device()
-        await self._disable_directional_trackpad_source_runtime()
-        await self.stop_rumble_fixer()
+        return await self.cleanup_for_unload()
 
 
 class Plugin:
@@ -3476,7 +3696,7 @@ class Plugin:
         self.startup_task = None
         self.service = service or DeckyZoneService()
 
-    async def _cancel_startup_task(self):
+    async def _cancel_startup_task(self, timeout=None):
         step = {
             "name": "cancelStartupTask",
             "ok": True,
@@ -3492,21 +3712,121 @@ class Plugin:
 
         step["changed"] = True
         self.startup_task.cancel()
+        if timeout is None:
+            try:
+                await self.startup_task
+            except asyncio.CancelledError:
+                pass
+            except Exception as error:
+                step["ok"] = False
+                step["message"] = str(error)
+                decky.logger.warning(f"Failed to cancel startup apply task: {error}")
+            finally:
+                self.startup_task = None
+            return step
+
+        done, pending = await asyncio.wait({self.startup_task}, timeout=timeout)
+        if pending:
+            step["ok"] = False
+            step["message"] = "Startup apply task did not stop before cleanup timeout."
+            return step
+
         try:
-            await self.startup_task
+            next(iter(done)).result()
         except asyncio.CancelledError:
             pass
         except Exception as error:
             step["ok"] = False
             step["message"] = str(error)
             decky.logger.warning(f"Failed to cancel startup apply task: {error}")
-        finally:
-            self.startup_task = None
+
+        self.startup_task = None
 
         return step
 
+    def _request_startup_task_cancel_for_unload(self):
+        step = {
+            "name": "cancelStartupTask",
+            "ok": True,
+            "changed": False,
+            "message": "",
+        }
+        if self.startup_task is None:
+            return step
+
+        if self.startup_task.done():
+            self.startup_task = None
+            return step
+
+        self.startup_task.cancel()
+        self.startup_task = None
+        step["changed"] = True
+        step["message"] = "Startup apply task cancel requested without waiting."
+        return step
+
+    def _normalize_cleanup_step_result(self, name, result):
+        if hasattr(self.service, "_normalize_cleanup_step_result"):
+            return self.service._normalize_cleanup_step_result(name, result)
+
+        if isinstance(result, dict):
+            return {
+                "name": name,
+                "ok": bool(result.get("ok", True)),
+                "changed": bool(result.get("changed", False)),
+                "message": str(result.get("message") or ""),
+            }
+
+        if isinstance(result, bool):
+            return {
+                "name": name,
+                "ok": result,
+                "changed": False,
+                "message": "" if result else "Action reported failure.",
+            }
+
+        return {
+            "name": name,
+            "ok": True,
+            "changed": False,
+            "message": "",
+        }
+
+    async def _run_cleanup_step(self, steps, name, action):
+        decky.logger.info(f"DeckyZone cleanup step {name} starting")
+        started_at = time.monotonic()
+        try:
+            result = action()
+            if asyncio.iscoroutine(result):
+                result = await result
+            step = self._normalize_cleanup_step_result(name, result)
+        except subprocess.CalledProcessError as error:
+            detail = (error.stderr or error.stdout or str(error)).strip()
+            step = {
+                "name": name,
+                "ok": False,
+                "changed": False,
+                "message": detail,
+            }
+        except Exception as error:
+            step = {
+                "name": name,
+                "ok": False,
+                "changed": False,
+                "message": str(error),
+            }
+
+        step["elapsedSeconds"] = time.monotonic() - started_at
+        steps.append(step)
+        _log_cleanup_step(decky.logger, step)
+        return step
+
     async def _reset_plugin_cleanup(self):
-        startup_step = await self._cancel_startup_task()
+        steps = []
+        startup_step = await self._run_cleanup_step(
+            steps,
+            "cancelStartupTask",
+            self._cancel_startup_task,
+        )
         if hasattr(self.service, "reset_plugin_state"):
             result = await self.service.reset_plugin_state()
         else:
@@ -3532,20 +3852,15 @@ class Plugin:
         return result
 
     def _log_cleanup_result(self, action_name, result):
-        decky.logger.info(
-            f"DeckyZone {action_name} cleanup finished: ok={result.get('ok')}"
+        elapsed = sum(
+            step.get("elapsedSeconds", 0)
+            for step in result.get("steps", [])
+            if isinstance(step.get("elapsedSeconds"), (int, float))
         )
-        for step in result.get("steps", []):
-            message = step.get("message") or ""
-            changed = step.get("changed")
-            if step.get("ok"):
-                decky.logger.info(
-                    f"DeckyZone cleanup step {step.get('name')}: ok changed={changed}"
-                )
-            else:
-                decky.logger.warning(
-                    f"DeckyZone cleanup step {step.get('name')}: failed {message}"
-                )
+        decky.logger.info(
+            f"DeckyZone {action_name} cleanup finished: "
+            f"ok={result.get('ok')} elapsed={elapsed:.3f}s"
+        )
 
     async def get_status(self):
         return self.service.get_status()
@@ -3678,14 +3993,30 @@ class Plugin:
 
     async def _unload(self):
         decky.logger.info("DeckyZone stopping")
-        await self._cancel_startup_task()
-        await self.service.stop_controller_mode_monitor()
-        if hasattr(self.service, "cleanup"):
-            await self.service.cleanup()
+        steps = []
+        startup_step = await self._run_cleanup_step(
+            steps,
+            "cancelStartupTask",
+            self._request_startup_task_cancel_for_unload,
+        )
+
+        if hasattr(self.service, "cleanup_for_unload"):
+            result = await self.service.cleanup_for_unload()
+        elif hasattr(self.service, "cleanup"):
+            result = await self.service.cleanup()
         else:
+            await self.service.stop_controller_mode_monitor()
             if hasattr(self.service, "stop_brightness_dial_fixer"):
                 await self.service.stop_brightness_dial_fixer()
             await self.service.stop_rumble_fixer()
+            result = {
+                "ok": True,
+                "steps": [],
+            }
+
+        result["steps"] = [startup_step, *result.get("steps", [])]
+        result["ok"] = bool(startup_step["ok"] and result.get("ok", True))
+        self._log_cleanup_result("unload", result)
 
     async def _uninstall(self):
         decky.logger.info("DeckyZone uninstall")
