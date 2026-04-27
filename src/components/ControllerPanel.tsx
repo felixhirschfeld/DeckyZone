@@ -8,23 +8,6 @@ import TrackpadPanel from './controller/TrackpadPanel'
 import type { ActiveGame, ControllerMode, PluginSettings, PluginStatus, TrackpadMode } from '../types/plugin'
 import { useDeckyToastNotice } from '../utils/toasts'
 
-type SteamInputDiagnosticAppDetails = {
-  bShowControllerConfig?: boolean
-  eEnableThirdPartyControllerConfiguration?: number
-  eSteamInputControllerMask?: number
-}
-
-type SteamInputDiagnosticState =
-  | { state: 'idle' }
-  | { state: 'loading'; appId: string }
-  | { state: 'ready'; appId: string; details: SteamInputDiagnosticAppDetails }
-  | { state: 'unavailable'; appId: string; message: string }
-
-type SteamAppsClient = {
-  GetCachedAppDetails?: (appId: number) => Promise<unknown>
-  RegisterForAppDetails?: (appId: number, callback: (details: unknown) => void) => { unregister?: () => void }
-}
-
 type Props = {
   activeGame: ActiveGame | null
   settings: PluginSettings
@@ -52,7 +35,6 @@ const testRumble = callable<[], boolean>('test_rumble')
 type RumbleSaveTarget = { scope: 'global' } | { scope: 'per_game'; appId: string }
 
 const DEFAULT_APP_ID = '0'
-const STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE = 'Steam Input state unavailable.'
 const CONTROLLER_STATUS_FAILED_NOTICE = 'Controller failed to initialize. Restart device.'
 const CONTROLLER_ACTION_FAILED_NOTICE = "Couldn't update setting."
 const CONTROLLER_MODE_ACTION_FAILED_NOTICE = "Couldn't update mode."
@@ -76,55 +58,6 @@ function getControllerStatusNotice(status: PluginStatus) {
 
 function isControllerModeConfirmed(settings: PluginSettings) {
   return settings.controllerModeAvailable && settings.controllerMode === 'gamepad'
-}
-
-function normalizeSteamInputDiagnosticDetails(rawDetails: unknown): SteamInputDiagnosticAppDetails | null {
-  let parsedDetails = rawDetails
-
-  if (typeof parsedDetails === 'string') {
-    try {
-      parsedDetails = JSON.parse(parsedDetails)
-    } catch {
-      return null
-    }
-  }
-
-  if (!parsedDetails || typeof parsedDetails !== 'object') {
-    return null
-  }
-
-  const details = parsedDetails as Record<string, unknown>
-  const thirdPartyControllerConfiguration = details.eEnableThirdPartyControllerConfiguration
-  const steamInputControllerMask = details.eSteamInputControllerMask
-  const showControllerConfig = details.bShowControllerConfig
-
-  if (
-    typeof thirdPartyControllerConfiguration !== 'number' &&
-    typeof steamInputControllerMask !== 'number' &&
-    typeof showControllerConfig !== 'boolean'
-  ) {
-    return null
-  }
-
-  return {
-    bShowControllerConfig: typeof showControllerConfig === 'boolean' ? showControllerConfig : undefined,
-    eEnableThirdPartyControllerConfiguration:
-      typeof thirdPartyControllerConfiguration === 'number' ? thirdPartyControllerConfiguration : undefined,
-    eSteamInputControllerMask: typeof steamInputControllerMask === 'number' ? steamInputControllerMask : undefined,
-  }
-}
-
-function getSteamInputDiagnosticStatus(details: SteamInputDiagnosticAppDetails) {
-  switch (details.eEnableThirdPartyControllerConfiguration) {
-    case 0:
-      return details.bShowControllerConfig === false ? 'Steam Input disabled' : 'Mixed or unknown Steam Input state'
-    case 1:
-      return details.bShowControllerConfig === true ? 'Steam Input enabled/default' : 'Mixed or unknown Steam Input state'
-    case 2:
-      return 'Steam Input enabled/forced'
-    default:
-      return 'Mixed or unknown Steam Input state'
-  }
 }
 
 async function syncActiveGameTarget(appId: string) {
@@ -163,7 +96,6 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
   const [testingRumble, setTestingRumble] = useState(false)
   const [rumbleMessage, setRumbleMessage] = useState<string | null>(null)
   const [rumbleMessageKind, setRumbleMessageKind] = useState<'success' | 'error' | null>(null)
-  const [steamInputDiagnostic, setSteamInputDiagnostic] = useState<SteamInputDiagnosticState>({ state: 'idle' })
   const rumbleIntensityLatestValue = useRef(settings.rumbleIntensity)
   const rumbleIntensityCommittedValue = useRef(settings.rumbleIntensity)
   const rumbleIntensityLatestTarget = useRef<RumbleSaveTarget>({ scope: 'global' })
@@ -575,79 +507,6 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
 
   const controllerModeBlocked = !isControllerModeConfirmed(settings)
 
-  useEffect(() => {
-    if (!activeGame || !isPerGameSettingsEnabled || !isButtonPromptFixEnabled) {
-      setSteamInputDiagnostic({ state: 'idle' })
-      return
-    }
-
-    const steamApps = window.SteamClient?.Apps as SteamAppsClient | undefined
-    const numericAppId = Number(activeGame.appid)
-
-    if (!steamApps?.GetCachedAppDetails || Number.isNaN(numericAppId)) {
-      setSteamInputDiagnostic({
-        state: 'unavailable',
-        appId: activeGame.appid,
-        message: STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE,
-      })
-      return
-    }
-
-    let cancelled = false
-    setSteamInputDiagnostic({ state: 'loading', appId: activeGame.appid })
-
-    const updateDiagnosticDetails = (rawDetails: unknown) => {
-      if (cancelled) {
-        return
-      }
-
-      const nextDetails = normalizeSteamInputDiagnosticDetails(rawDetails)
-      if (!nextDetails) {
-        setSteamInputDiagnostic({
-          state: 'unavailable',
-          appId: activeGame.appid,
-          message: STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE,
-        })
-        return
-      }
-
-      setSteamInputDiagnostic({
-        state: 'ready',
-        appId: activeGame.appid,
-        details: nextDetails,
-      })
-    }
-
-    void steamApps
-      .GetCachedAppDetails(numericAppId)
-      .then((details) => {
-        updateDiagnosticDetails(details)
-      })
-      .catch(() => {
-        if (cancelled) {
-          return
-        }
-
-        setSteamInputDiagnostic({
-          state: 'unavailable',
-          appId: activeGame.appid,
-          message: STEAM_INPUT_DIAGNOSTIC_UNAVAILABLE_MESSAGE,
-        })
-      })
-
-    const registration = steamApps.RegisterForAppDetails?.(numericAppId, (details) => {
-      updateDiagnosticDetails(details)
-    })
-
-    return () => {
-      cancelled = true
-      registration?.unregister?.()
-    }
-  }, [activeGame, isPerGameSettingsEnabled, isButtonPromptFixEnabled])
-
-  const shouldShowSteamInputDisabledWarning =
-    steamInputDiagnostic.state === 'ready' && getSteamInputDiagnosticStatus(steamInputDiagnostic.details) === 'Steam Input disabled'
-  const isButtonPromptFixActive = settings.inputplumberAvailable && isPerGameSettingsEnabled && isButtonPromptFixEnabled
   const controllerSpinner = savingControllerMode || savingRumbleIntensity
 
   return (
@@ -668,10 +527,8 @@ const ControllerPanel = ({ activeGame, settings, status, onSettingsChange, onSta
         inputplumberAvailable={settings.inputplumberAvailable}
         isPerGameSettingsEnabled={isPerGameSettingsEnabled}
         isButtonPromptFixEnabled={isButtonPromptFixEnabled}
-        isButtonPromptFixActive={isButtonPromptFixActive}
         savingPerGameSettings={savingPerGameSettings}
         savingButtonPromptFix={savingButtonPromptFix}
-        shouldShowSteamInputDisabledWarning={shouldShowSteamInputDisabledWarning}
         onPerGameSettingsToggleChange={(value: boolean) => void handlePerGameSettingsToggleChange(value)}
         onButtonPromptFixToggleChange={(value: boolean) => void handleButtonPromptFixToggleChange(value)}
       />

@@ -1,17 +1,14 @@
 import { PanelSectionRow, ToggleField } from '@decky/ui'
 import type { ReactNode } from 'react'
 import type { ActiveGame } from '../../types/plugin'
-import { useDeckyToastNotice } from '../../utils/toasts'
 
 type Props = {
   activeGame: ActiveGame | null
   inputplumberAvailable: boolean
   isPerGameSettingsEnabled: boolean
   isButtonPromptFixEnabled: boolean
-  isButtonPromptFixActive: boolean
   savingPerGameSettings: boolean
   savingButtonPromptFix: boolean
-  shouldShowSteamInputDisabledWarning: boolean
   onPerGameSettingsToggleChange: (enabled: boolean) => void
   onButtonPromptFixToggleChange: (enabled: boolean) => void
 }
@@ -94,10 +91,8 @@ const PerGameSettingsPanel = ({
   inputplumberAvailable,
   isPerGameSettingsEnabled,
   isButtonPromptFixEnabled,
-  isButtonPromptFixActive,
   savingPerGameSettings,
   savingButtonPromptFix,
-  shouldShowSteamInputDisabledWarning,
   onPerGameSettingsToggleChange,
   onButtonPromptFixToggleChange,
 }: Props) => {
@@ -125,17 +120,6 @@ const PerGameSettingsPanel = ({
   //   onChange: (option: { data: PerGameRemapTarget }) => onPerGameM2RemapTargetChange(option.data),
   // } as any
 
-  useDeckyToastNotice(
-    activeGame && isButtonPromptFixActive && shouldShowSteamInputDisabledWarning
-      ? {
-          activeKey: `steam-input-disabled:${activeGame.appid}`,
-          title: 'Controller',
-          body: 'Steam Input disabled',
-          severity: 'warning',
-        }
-      : null,
-  )
-
   return (
     <>
       <PanelSectionRow>
@@ -157,19 +141,6 @@ const PerGameSettingsPanel = ({
             description={inputplumberAvailable ? BUTTON_PROMPT_FIX_DESCRIPTION : INPUTPLUMBER_UNAVAILABLE_DESCRIPTION}
           />
         </PanelSectionRow>
-      )}
-      {activeGame && isButtonPromptFixActive && shouldShowSteamInputDisabledWarning && (
-        <>
-          {/*
-            TODO: Re-enable these M1/M2 remap dropdowns after their behavior is fully confirmed on-device.
-          <PanelSectionRow>
-            <DropdownItem key={`${activeGame.appid}-m1-${m1RemapTarget}`} {...m1RemapDropdownProps} />
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <DropdownItem key={`${activeGame.appid}-m2-${m2RemapTarget}`} {...m2RemapDropdownProps} />
-          </PanelSectionRow>
-          */}
-        </>
       )}
     </>
   )
