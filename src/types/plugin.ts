@@ -4,7 +4,7 @@ export type PluginStatus = {
 }
 
 export type ControllerMode = 'gamepad' | 'desktop'
-export type TrackpadMode = 'default' | 'disabled' | 'directional_buttons'
+export type TrackpadMode = 'default' | 'disabled' | 'directional_buttons' | 'mouse_drag_fix'
 
 export type GyroMountMatrixFixState = {
   visible: boolean

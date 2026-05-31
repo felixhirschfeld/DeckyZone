@@ -46,6 +46,7 @@ Trackpad modes:
 - `Default`: normal controller behavior with mouse available.
 - `Disabled`: turns off both trackpads.
 - `Directional Buttons`: left trackpad is D-pad, right trackpad is A/B/X/Y.
+- `Mouse Drag Fix`: keeps mouse behavior, but maps both right trackpad click zones to left click so dragging does not release when crossing into the original right-click zone; long press sends right click.
 
 ### Interface
 

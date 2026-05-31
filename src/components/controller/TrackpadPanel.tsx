@@ -18,6 +18,7 @@ const TRACKPAD_MODE_OPTIONS: TrackpadModeOption[] = [
   { data: 'default', label: 'Default' },
   { data: 'disabled', label: 'Disabled' },
   { data: 'directional_buttons', label: 'Directional Buttons' },
+  { data: 'mouse_drag_fix', label: 'Mouse Drag Fix' },
 ]
 
 function getTrackpadModeDescription(mode: TrackpadMode) {
@@ -26,6 +27,8 @@ function getTrackpadModeDescription(mode: TrackpadMode) {
       return 'Turns off both trackpads'
     case 'directional_buttons':
       return 'Left pad is D-pad, right pad is A/B/X/Y'
+    case 'mouse_drag_fix':
+      return 'Keeps left-button drags active across the right pad click zones and uses long press for right click'
     case 'default':
     default:
       return 'Normal controller behavior with mouse available'

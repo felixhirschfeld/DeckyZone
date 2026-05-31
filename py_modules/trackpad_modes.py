@@ -2,12 +2,14 @@ TRACKPAD_MODE_DEFAULT = "default"
 LEGACY_TRACKPAD_MODE_MOUSE = "mouse"
 TRACKPAD_MODE_DISABLED = "disabled"
 TRACKPAD_MODE_DIRECTIONAL_BUTTONS = "directional_buttons"
+TRACKPAD_MODE_MOUSE_DRAG_FIX = "mouse_drag_fix"
 
 DEFAULT_TRACKPAD_MODE = TRACKPAD_MODE_DEFAULT
 VALID_TRACKPAD_MODES = {
     TRACKPAD_MODE_DEFAULT,
     TRACKPAD_MODE_DISABLED,
     TRACKPAD_MODE_DIRECTIONAL_BUTTONS,
+    TRACKPAD_MODE_MOUSE_DRAG_FIX,
 }
 
 DIRECTIONAL_CAPABILITY_MAP_ID = "deckyzone_zone_trackpad_directional"
@@ -44,6 +46,17 @@ ZOTAC_TOUCH_BUTTON_DEFAULT_MAPPINGS = (
     ("Right Touch Down", 0x08, (), ()),
     ("Right Touch Left", 0x09, (), ("left",)),
     ("Right Touch Right", 0x0A, (), ("right",)),
+)
+
+ZOTAC_TOUCH_BUTTON_MOUSE_DRAG_FIX_MAPPINGS = (
+    ("Left Touch Up", 0x03, (), ()),
+    ("Left Touch Down", 0x04, (), ()),
+    ("Left Touch Left", 0x05, (), ()),
+    ("Left Touch Right", 0x06, (), ()),
+    ("Right Touch Up", 0x07, (), ()),
+    ("Right Touch Down", 0x08, (), ()),
+    ("Right Touch Left", 0x09, (), ("left",)),
+    ("Right Touch Right", 0x0A, (), ("left",)),
 )
 
 ZOTAC_GAMEPAD_BUTTON_BITS = {
@@ -95,6 +108,10 @@ def is_trackpad_mode_directional(mode):
     return normalize_trackpad_mode(mode) == TRACKPAD_MODE_DIRECTIONAL_BUTTONS
 
 
+def is_trackpad_mode_mouse_drag_fix(mode):
+    return normalize_trackpad_mode(mode) == TRACKPAD_MODE_MOUSE_DRAG_FIX
+
+
 def _build_zotac_button_mapping_payload(
     source_button_id,
     *,
@@ -140,4 +157,15 @@ def build_default_trackpad_button_payloads():
             mouse_buttons=tuple(mouse_buttons),
         )
         for _, source_button_id, gamepad_buttons, mouse_buttons in ZOTAC_TOUCH_BUTTON_DEFAULT_MAPPINGS
+    }
+
+
+def build_mouse_drag_fix_trackpad_button_payloads():
+    return {
+        source_button_id: _build_zotac_button_mapping_payload(
+            source_button_id,
+            gamepad_buttons=tuple(gamepad_buttons),
+            mouse_buttons=tuple(mouse_buttons),
+        )
+        for _, source_button_id, gamepad_buttons, mouse_buttons in ZOTAC_TOUCH_BUTTON_MOUSE_DRAG_FIX_MAPPINGS
     }
