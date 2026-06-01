@@ -266,6 +266,7 @@ class DeckyZoneService:
         self._active_per_game_app_id = DEFAULT_APP_ID
         self._zotac_mouse_device_fd = None
         self._zotac_mouse_device_path = None
+        self._trackpad_latch_process = None
         self._brightness_dial_device_path = None
         self._brightness_dial_task = None
         self._brightness_dial_running = False
@@ -1106,6 +1107,78 @@ class DeckyZoneService:
             self._get_effective_trackpad_mode(app_id)
         )
 
+    def _should_enable_mouse_drag_fix_trackpads(self, app_id=None):
+        return trackpad_modes.is_trackpad_mode_mouse_drag_fix(
+            self._get_effective_trackpad_mode(app_id)
+        )
+
+    def _get_trackpad_latch_remapper_script_path(self):
+        return Path(decky.DECKY_PLUGIN_DIR) / "py_modules" / "zonepad_latch_remapper.py"
+
+    def _is_trackpad_latch_remapper_running(self):
+        return (
+            self._trackpad_latch_process is not None
+            and self._trackpad_latch_process.poll() is None
+        )
+
+    def _start_trackpad_latch_remapper(self):
+        if self._is_trackpad_latch_remapper_running():
+            return True
+
+        script_path = self._get_trackpad_latch_remapper_script_path()
+        if not script_path.is_file():
+            self.logger.warning(f"Trackpad latch remapper script missing: {script_path}")
+            return False
+
+        try:
+            self._trackpad_latch_process = subprocess.Popen(
+                [
+                    "/usr/bin/python3",
+                    str(script_path),
+                    "--release-delay-ms",
+                    "400",
+                    "--long-press-ms",
+                    "650",
+                    "--drag-threshold",
+                    "12",
+                    "--right-click-ms",
+                    "70",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception as error:
+            self.logger.warning(f"Failed to start trackpad latch remapper: {error}")
+            self._trackpad_latch_process = None
+            return False
+
+        return True
+
+    def _stop_trackpad_latch_remapper(self):
+        process = self._trackpad_latch_process
+        if process is None:
+            return self._cleanup_step_result(changed=False)
+
+        changed = process.poll() is None
+        if changed:
+            process.terminate()
+            try:
+                process.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2)
+
+        self._trackpad_latch_process = None
+        return self._cleanup_step_result(changed=changed)
+
+    def _sync_trackpad_latch_remapper_state(self, app_id=None):
+        if self._should_enable_mouse_drag_fix_trackpads(app_id):
+            return self._start_trackpad_latch_remapper()
+
+        self._stop_trackpad_latch_remapper()
+        return True
+
     def _get_effective_rumble_enabled(self, app_id=None):
         app_id = str(app_id or self._active_per_game_app_id or DEFAULT_APP_ID)
         global_enabled = self.settings_store.get_rumble_enabled()
@@ -1616,6 +1689,9 @@ class DeckyZoneService:
         if self._should_enable_directional_trackpads(app_id):
             return self._apply_directional_trackpad_button_mappings()
 
+        if self._should_enable_mouse_drag_fix_trackpads(app_id):
+            return self._apply_mouse_drag_fix_trackpad_button_mappings()
+
         return self._restore_directional_trackpad_button_mappings()
 
     def _should_enable_runtime_input_profile(self, app_id=None):
@@ -1982,12 +2058,16 @@ class DeckyZoneService:
 
         self._temporary_target_mode = None
         trackpad_result = self._sync_trackpad_suppression_state()
+        latch_result = self._sync_trackpad_latch_remapper_state(self._active_per_game_app_id)
         brightness_result = await self._sync_brightness_dial_fixer_state()
         rumble_result = await self._sync_rumble_state(self._active_per_game_app_id)
         profile_result = await self._sync_home_button_navigation_state()
 
         if not trackpad_result:
             return "Trackpad suppression state did not apply."
+
+        if not latch_result:
+            return "Trackpad latch remapper did not activate."
 
         if not brightness_result:
             return "Brightness dial listener did not activate."
@@ -2441,6 +2521,7 @@ class DeckyZoneService:
         )
         include_mouse = self._should_include_mouse_target(app_id)
         trackpad_result = self._sync_trackpad_suppression_state(app_id)
+        latch_result = self._sync_trackpad_latch_remapper_state(app_id)
         rumble_result = await self._sync_rumble_state(app_id)
 
         if button_prompt_fix_enabled:
@@ -2455,7 +2536,7 @@ class DeckyZoneService:
                 self._temporary_target_mode = MISSING_GLYPH_FIX_TARGET
                 await self._sync_brightness_dial_fixer_state()
                 profile_result = await self._sync_home_button_navigation_state()
-                return trackpad_result and rumble_result and profile_result
+                return trackpad_result and latch_result and rumble_result and profile_result
             except subprocess.CalledProcessError as error:
                 detail = (error.stderr or error.stdout or str(error)).strip()
                 self.logger.warning(f"Failed to apply per-game controller override: {detail}")
@@ -2488,7 +2569,7 @@ class DeckyZoneService:
                     return False
 
             profile_result = await self._sync_home_button_navigation_state()
-            return trackpad_result and rumble_result and profile_result
+            return trackpad_result and latch_result and rumble_result and profile_result
 
         try:
             if self.settings_store.get_startup_apply_enabled():
@@ -2505,8 +2586,8 @@ class DeckyZoneService:
                 await self._sync_brightness_dial_fixer_state()
                 await self._sync_rumble_state(app_id)
                 await self._sync_home_button_navigation_state()
-                return True
-            return True
+                return trackpad_result and latch_result
+            return trackpad_result and latch_result
         except subprocess.CalledProcessError as error:
             detail = (error.stderr or error.stdout or str(error)).strip()
             self.logger.warning(f"Failed to restore inherited controller target: {detail}")
@@ -2816,6 +2897,55 @@ class DeckyZoneService:
         except Exception as error:
             self.logger.warning(
                 f"Failed to apply directional trackpad mappings: {error}"
+            )
+            return False
+
+        return True
+
+    def _apply_mouse_drag_fix_trackpad_button_mappings(self):
+        device_path = self._resolve_zotac_command_hidraw_path()
+        if not device_path:
+            self.logger.warning(
+                "Unable to locate Zotac command HID node for mouse drag fix trackpad mode."
+            )
+            return False
+
+        desired_mappings = trackpad_modes.build_mouse_drag_fix_trackpad_button_payloads()
+
+        try:
+            current_mappings = self._get_touch_button_mappings(device_path)
+        except Exception as error:
+            self.logger.warning(
+                f"Failed to read current mouse drag fix trackpad mappings: {error}"
+            )
+            return False
+
+        backup_mappings = self._load_directional_trackpad_backup()
+        if backup_mappings is None:
+            if current_mappings == desired_mappings:
+                backup_mappings = trackpad_modes.build_default_trackpad_button_payloads()
+                self.logger.warning(
+                    "Mouse drag fix trackpad mappings were already active without a backup; "
+                    "using the observed Zotac defaults for restoration."
+                )
+            else:
+                backup_mappings = current_mappings
+            try:
+                self._store_directional_trackpad_backup(backup_mappings)
+            except Exception as error:
+                self.logger.warning(
+                    f"Failed to store mouse drag fix trackpad backup mappings: {error}"
+                )
+                return False
+
+        try:
+            for button_id, mapping_payload in desired_mappings.items():
+                if current_mappings.get(button_id) == mapping_payload:
+                    continue
+                self._set_zotac_button_mapping(device_path, mapping_payload)
+        except Exception as error:
+            self.logger.warning(
+                f"Failed to apply mouse drag fix trackpad mappings: {error}"
             )
             return False
 
@@ -3794,6 +3924,11 @@ class DeckyZoneService:
             "releaseTrackpadMouseGrab",
             self._release_zotac_mouse_device_for_reset,
         )
+        await self._run_cleanup_step(
+            steps,
+            "stopTrackpadLatchRemapper",
+            self._stop_trackpad_latch_remapper,
+        )
         gyro_mount_matrix_step = await self._run_cleanup_step(
             steps,
             "removeGyroMountMatrixFix",
@@ -3870,6 +4005,11 @@ class DeckyZoneService:
             steps,
             "releaseTrackpadMouseGrab",
             self._release_zotac_mouse_device_cleanup_result,
+        )
+        await self._run_cleanup_step(
+            steps,
+            "stopTrackpadLatchRemapper",
+            self._stop_trackpad_latch_remapper,
         )
         await self._run_cleanup_step(
             steps,
