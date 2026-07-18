@@ -19,6 +19,7 @@ import plugin_update
 import plugin_settings
 import runtime_profile_utils
 import trackpad_modes
+import vram_control
 
 gamescope_display_profiles = gamescope_display_profiles_module
 
@@ -747,6 +748,7 @@ class DeckyZoneService:
             "rumbleIntensity": self.settings_store.get_rumble_intensity(),
             "rumbleAvailable": self._rumble_available,
             "perGameSettings": self.settings_store.get_per_game_settings(),
+            "vram": self._get_vram_state(),
         }
 
     def get_env(self):
@@ -3330,6 +3332,52 @@ class DeckyZoneService:
         self.gamescope_display_profiles.set_green_tint_fix_enabled(enabled)
         return self._current_settings()
 
+    def _get_vram_state(self):
+        state = {
+            "available": False,
+            "pendingVramGb": None,
+            "activeVramGb": None,
+            "rebootRequired": False,
+            "minVramGb": vram_control.MIN_VRAM_GB,
+            "maxVramGb": vram_control.MAX_VRAM_GB,
+        }
+
+        if not self.is_supported_device():
+            return state
+
+        try:
+            state["pendingVramGb"] = vram_control.read_pending_vram_gb()
+            state["available"] = True
+        except Exception as error:
+            self.logger.warning(f"Failed to read pending VRAM size from CMOS: {error}")
+            return state
+
+        try:
+            state["activeVramGb"] = vram_control.read_active_vram_gb()
+        except Exception as error:
+            self.logger.warning(f"Failed to read active VRAM size: {error}")
+
+        if (
+            state["pendingVramGb"] is not None
+            and state["activeVramGb"] is not None
+        ):
+            state["rebootRequired"] = (
+                abs(state["pendingVramGb"] - state["activeVramGb"]) >= 0.5
+            )
+
+        return state
+
+    async def set_vram_size_gb(self, size_gb):
+        if not self.is_supported_device():
+            raise RuntimeError("VRAM size control only applies on Zotac Zone.")
+
+        size_gb = int(size_gb)
+        vram_control.write_vram_gb(size_gb)
+        self.logger.info(
+            f"Stored VRAM size {size_gb}GB in CMOS; reboot required to apply."
+        )
+        return self._current_settings()
+
     def remove_gamescope_display_profiles(self):
         try:
             self.gamescope_display_profiles.cleanup_managed_files()
@@ -4127,6 +4175,9 @@ class Plugin:
 
     async def set_gamescope_green_tint_fix_enabled(self, enabled):
         return await self.service.set_gamescope_green_tint_fix_enabled(enabled)
+
+    async def set_vram_size_gb(self, size_gb):
+        return await self.service.set_vram_size_gb(size_gb)
 
     async def set_per_game_settings_enabled(self, app_id, enabled):
         return self.service.set_per_game_settings_enabled(app_id, enabled)

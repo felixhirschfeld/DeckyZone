@@ -124,6 +124,15 @@ export type ActiveGame = {
   local_cache_version?: number | string
 }
 
+export type VramState = {
+  available: boolean
+  pendingVramGb: number | null
+  activeVramGb: number | null
+  rebootRequired: boolean
+  minVramGb: number
+  maxVramGb: number
+}
+
 export type PluginSettings = {
   startupApplyEnabled: boolean
   controllerMode: ControllerMode | null
@@ -144,6 +153,7 @@ export type PluginSettings = {
   rumbleIntensity: number
   rumbleAvailable: boolean
   perGameSettings: Record<string, PerGameSettings>
+  vram: VramState
 }
 
 export type PluginResetResult = {
