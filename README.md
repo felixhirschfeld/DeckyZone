@@ -64,6 +64,14 @@ Zotac Glyphs applies Zotac controller button glyphs and controller images in Ste
 
 Display changes require a reboot after toggling them. `HDR / Washed out colors` was fixed out of the box in my SteamOS `main`, SteamOS 3.8.1 Preview, Bazzite, Nobara, and CachyOS testing.
 
+### Performance
+
+| Feature   | SteamOS `main` | Bazzite | Nobara | CachyOS |
+| --------- | -------------- | ------- | ------ | ------- |
+| VRAM Size | ❓             | ❓      | ❓     | ✅      |
+
+VRAM Size sets the UMA framebuffer size (4-8GB, same range as the Zotac launcher on Windows). The Zone stores this setting in a CMOS byte that the BIOS reads at boot, so changes require a reboot to apply. The panel shows both the active size and the pending size until then. Resetting the BIOS (e.g. after full battery drain) reverts it to the 4GB default.
+
 ## Compatibility Notes
 
 Controller features rely on InputPlumber and Zotac input/HID support. Non-SteamOS compatibility depends on what that OS image currently ships and exposes to Decky Loader.
