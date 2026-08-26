@@ -7,6 +7,8 @@ import trackpad_modes
 STARTUP_APPLY_KEY = "startupApplyEnabled"
 HOME_BUTTON_ENABLED_KEY = "homeButtonEnabled"
 BRIGHTNESS_DIAL_FIX_ENABLED_KEY = "brightnessDialFixEnabled"
+FIX_SLEEP_ENABLED_KEY = "fixSleepEnabled"
+FIX_SLEEP_ORIGINAL_AMD_IOMMU_OFF_KEY = "fixSleepOriginalAmdIommuOff"
 TRACKPAD_MODE_KEY = "trackpadMode"
 LEGACY_TRACKPADS_DISABLED_KEY = "trackpadsDisabled"
 ZOTAC_GLYPHS_ENABLED_KEY = "zotacGlyphsEnabled"
@@ -25,6 +27,7 @@ M2_REMAP_TARGET_KEY = "m2RemapTarget"
 DEFAULT_STARTUP_APPLY_ENABLED = False
 DEFAULT_HOME_BUTTON_ENABLED = False
 DEFAULT_BRIGHTNESS_DIAL_FIX_ENABLED = False
+DEFAULT_FIX_SLEEP_ENABLED = False
 DEFAULT_TRACKPAD_MODE = trackpad_modes.DEFAULT_TRACKPAD_MODE
 DEFAULT_ZOTAC_GLYPHS_ENABLED = False
 DEFAULT_RUMBLE_ENABLED = False
@@ -231,6 +234,33 @@ def get_brightness_dial_fix_enabled():
 def set_brightness_dial_fix_enabled(enabled):
     _write_setting(BRIGHTNESS_DIAL_FIX_ENABLED_KEY, bool(enabled))
     return get_brightness_dial_fix_enabled()
+
+
+def get_fix_sleep_enabled():
+    settings = _read_settings()
+    return bool(settings.get(FIX_SLEEP_ENABLED_KEY, DEFAULT_FIX_SLEEP_ENABLED))
+
+
+def set_fix_sleep_enabled(enabled):
+    _write_setting(FIX_SLEEP_ENABLED_KEY, bool(enabled))
+    return get_fix_sleep_enabled()
+
+
+def get_fix_sleep_original_amd_iommu_off():
+    settings = _read_settings()
+    value = settings.get(FIX_SLEEP_ORIGINAL_AMD_IOMMU_OFF_KEY)
+    return value if isinstance(value, bool) else None
+
+
+def set_fix_sleep_original_amd_iommu_off(disabled):
+    _write_setting(FIX_SLEEP_ORIGINAL_AMD_IOMMU_OFF_KEY, bool(disabled))
+    return get_fix_sleep_original_amd_iommu_off()
+
+
+def clear_fix_sleep_original_amd_iommu_off():
+    setting_file.read()
+    setting_file.settings.pop(FIX_SLEEP_ORIGINAL_AMD_IOMMU_OFF_KEY, None)
+    setting_file.commit()
 
 
 def get_trackpad_mode():
