@@ -64,6 +64,14 @@ Zotac Glyphs applies Zotac controller button glyphs and controller images in Ste
 
 Display changes require a reboot after toggling them. `HDR / Washed out colors` was fixed out of the box in my SteamOS `main`, SteamOS 3.8.1 Preview, Bazzite, Nobara, and CachyOS testing.
 
+### Power
+
+| Feature   | SteamOS `main` | Bazzite | Nobara | CachyOS |
+| --------- | -------------- | ------- | ------ | ------- |
+| Fix Sleep | ❓             | ❌      | ❌      | ❌      |
+
+Fix Sleep removes SteamOS's `amd_iommu=off` boot argument, allowing AMD IOMMU on the ZOTAC ZONE. It requires a restart and reports the configured GRUB state and whether the running kernel command line still disables AMD IOMMU.
+
 ## Compatibility Notes
 
 Controller features rely on InputPlumber and Zotac input/HID support. Non-SteamOS compatibility depends on what that OS image currently ships and exposes to Decky Loader.

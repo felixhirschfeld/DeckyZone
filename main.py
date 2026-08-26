@@ -18,6 +18,7 @@ import inputplumber_target_sync
 import plugin_update
 import plugin_settings
 import runtime_profile_utils
+import steamos_sleep_fix
 import trackpad_modes
 
 gamescope_display_profiles = gamescope_display_profiles_module
@@ -244,6 +245,7 @@ class DeckyZoneService:
         read_text=None,
         settings_store=plugin_settings,
         gamescope_display_profiles=None,
+        sleep_fix=None,
     ):
         self.command_runner = command_runner
         self.sleep = sleep
@@ -256,6 +258,11 @@ class DeckyZoneService:
                 user_home=decky.DECKY_USER_HOME,
                 plugin_dir=decky.DECKY_PLUGIN_DIR,
             )
+        )
+        self.sleep_fix = sleep_fix or steamos_sleep_fix.SteamOSSleepFix(
+            command_runner=command_runner,
+            runtime_dir=decky.DECKY_PLUGIN_RUNTIME_DIR,
+            env=self.get_env(),
         )
         self._status = {"state": "idle", "message": DBUS_READY_MESSAGE}
         self._privilege_context_logged = False
@@ -727,12 +734,14 @@ class DeckyZoneService:
     def _current_settings(self):
         display_profile_settings = self._get_display_profile_settings()
         controller_mode_snapshot = self._get_controller_mode_snapshot()
+        sleep_fix_state = self._get_sleep_fix_state()
         return {
             "startupApplyEnabled": self.settings_store.get_startup_apply_enabled(),
             "controllerMode": controller_mode_snapshot["mode"],
             "controllerModeAvailable": controller_mode_snapshot["available"],
             "homeButtonEnabled": self.settings_store.get_home_button_enabled(),
             "brightnessDialFixEnabled": self.settings_store.get_brightness_dial_fix_enabled(),
+            "sleepFix": sleep_fix_state,
             "gyroMountMatrixFix": self._get_gyro_mount_matrix_fix_state(),
             "trackpadMode": self.settings_store.get_trackpad_mode(),
             "zotacGlyphsEnabled": self.settings_store.get_zotac_glyphs_enabled(),
@@ -747,6 +756,56 @@ class DeckyZoneService:
             "rumbleIntensity": self.settings_store.get_rumble_intensity(),
             "rumbleAvailable": self._rumble_available,
             "perGameSettings": self.settings_store.get_per_game_settings(),
+        }
+
+    def _get_sleep_fix_state(self):
+        desired_enabled = self.settings_store.get_fix_sleep_enabled()
+        state = self.sleep_fix.get_state()
+        config_iommu_disabled = state["configIommuDisabled"]
+        runtime_iommu_disabled = state["runtimeIommuDisabled"]
+        available = bool(state["available"])
+        reboot_required = bool(
+            isinstance(config_iommu_disabled, bool)
+            and isinstance(runtime_iommu_disabled, bool)
+            and config_iommu_disabled != runtime_iommu_disabled
+        )
+
+        if not available:
+            status = "unavailable"
+            message = state["message"] or "Fix Sleep is unavailable."
+        elif desired_enabled and config_iommu_disabled:
+            status = "configuration_drift"
+            message = "AMD IOMMU is disabled in the SteamOS boot configuration."
+        elif desired_enabled and reboot_required:
+            status = "pending_reboot"
+            message = "AMD IOMMU boot configuration is updated. Restart required."
+        elif runtime_iommu_disabled is None:
+            status = "configured"
+            message = state["message"] or "AMD IOMMU runtime state is unavailable."
+        elif desired_enabled and runtime_iommu_disabled is False:
+            status = "active"
+            message = "The current boot does not disable AMD IOMMU."
+        elif not desired_enabled and config_iommu_disabled is False:
+            status = "configuration_drift"
+            message = "AMD IOMMU is not disabled in the SteamOS boot configuration."
+        elif reboot_required:
+            status = "pending_reboot"
+            message = "AMD IOMMU boot configuration is updated. Restart required."
+        elif runtime_iommu_disabled is True:
+            status = "disabled"
+            message = "The current boot disables AMD IOMMU."
+        else:
+            status = "configured"
+            message = "AMD IOMMU boot configuration matches the saved setting."
+
+        return {
+            "enabled": desired_enabled,
+            "available": available,
+            "configuredIommuDisabled": config_iommu_disabled,
+            "runtimeIommuDisabled": runtime_iommu_disabled,
+            "rebootRequired": reboot_required,
+            "status": status,
+            "message": message,
         }
 
     def get_env(self):
@@ -3275,6 +3334,46 @@ class DeckyZoneService:
 
         return self._current_settings()
 
+    async def set_fix_sleep_enabled(self, enabled):
+        enabled = bool(enabled)
+        current_enabled = self.settings_store.get_fix_sleep_enabled()
+        state = self.sleep_fix.get_state()
+        if not state["available"]:
+            raise RuntimeError(state["message"] or "Fix Sleep is unavailable.")
+
+        if enabled:
+            if not current_enabled:
+                self.settings_store.set_fix_sleep_original_amd_iommu_off(
+                    bool(state["configIommuDisabled"])
+                )
+
+            try:
+                self.sleep_fix.apply_iommu_disabled(False)
+            except steamos_sleep_fix.SleepFixConfigurationError as error:
+                raise RuntimeError(str(error)) from error
+
+            self.settings_store.set_fix_sleep_enabled(True)
+            return self._current_settings()
+
+        original_iommu_disabled = (
+            self.settings_store.get_fix_sleep_original_amd_iommu_off()
+        )
+        if original_iommu_disabled is None:
+            if current_enabled:
+                raise RuntimeError(
+                    "DeckyZone cannot safely restore the original AMD IOMMU setting."
+                )
+            return self._current_settings()
+
+        try:
+            self.sleep_fix.apply_iommu_disabled(original_iommu_disabled)
+        except steamos_sleep_fix.SleepFixConfigurationError as error:
+            raise RuntimeError(str(error)) from error
+
+        self.settings_store.set_fix_sleep_enabled(False)
+        self.settings_store.clear_fix_sleep_original_amd_iommu_off()
+        return self._current_settings()
+
     async def set_gyro_mount_matrix_fix_enabled(self, enabled):
         state = self._get_gyro_mount_matrix_fix_state()
         if enabled:
@@ -3757,6 +3856,22 @@ class DeckyZoneService:
         self.settings_store.reset_settings()
         return self._cleanup_step_result(changed=True)
 
+    def _skip_settings_reset_for_sleep_fix_failure(self):
+        return self._cleanup_step_result(
+            ok=False,
+            message="Skipped because the original AMD IOMMU setting was not restored.",
+        )
+
+    async def _restore_sleep_fix_for_reset(self):
+        if not self.settings_store.get_fix_sleep_enabled():
+            return self._cleanup_step_result()
+
+        await self.set_fix_sleep_enabled(False)
+        return self._cleanup_step_result(
+            changed=True,
+            message="Restored the original AMD IOMMU setting. Restart required.",
+        )
+
     async def reset_plugin_state(self):
         steps = []
         force_inputplumber_restart = bool(
@@ -3768,6 +3883,11 @@ class DeckyZoneService:
             steps,
             "stopControllerModeMonitor",
             self.stop_controller_mode_monitor,
+        )
+        sleep_fix_step = await self._run_cleanup_step(
+            steps,
+            "restoreSleepFix",
+            self._restore_sleep_fix_for_reset,
         )
         await self._run_cleanup_step(
             steps,
@@ -3824,11 +3944,18 @@ class DeckyZoneService:
             "removeGamescopeDisplayProfiles",
             self._cleanup_gamescope_display_profiles_for_reset,
         )
-        await self._run_cleanup_step(
-            steps,
-            "resetSettings",
-            self._reset_settings_for_reset,
-        )
+        if sleep_fix_step["ok"]:
+            await self._run_cleanup_step(
+                steps,
+                "resetSettings",
+                self._reset_settings_for_reset,
+            )
+        else:
+            await self._run_cleanup_step(
+                steps,
+                "resetSettings",
+                self._skip_settings_reset_for_sleep_fix_failure,
+            )
 
         self._set_status("disabled", DISABLED_MESSAGE)
         ok = all(step["ok"] for step in steps)
@@ -4109,6 +4236,9 @@ class Plugin:
 
     async def set_brightness_dial_fix_enabled(self, enabled):
         return await self.service.set_brightness_dial_fix_enabled(enabled)
+
+    async def set_fix_sleep_enabled(self, enabled):
+        return await self.service.set_fix_sleep_enabled(enabled)
 
     async def set_gyro_mount_matrix_fix_enabled(self, enabled):
         return await self.service.set_gyro_mount_matrix_fix_enabled(enabled)

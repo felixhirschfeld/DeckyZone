@@ -11,6 +11,7 @@ import ControllerPanel from "./components/ControllerPanel"
 import DisplayPanel from "./components/DisplayPanel"
 import ErrorBoundary from "./components/ErrorBoundary"
 import InterfacePanel from "./components/InterfacePanel"
+import PowerPanel from "./components/PowerPanel"
 import QuickAccessTitleView from "./components/QuickAccessTitleView"
 import TroubleshootingPanel from "./components/TroubleshootingPanel"
 import UpdatesPanel from "./components/UpdatesPanel"
@@ -436,6 +437,12 @@ function Content() {
       </ErrorBoundary>
       <ErrorBoundary title="Display">
         <DisplayPanel
+          settings={settings}
+          onSettingsChange={applySettingsUpdate}
+        />
+      </ErrorBoundary>
+      <ErrorBoundary title="Power">
+        <PowerPanel
           settings={settings}
           onSettingsChange={applySettingsUpdate}
         />

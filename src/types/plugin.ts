@@ -19,6 +19,16 @@ export type GyroMountMatrixFixState = {
   managedOverrideHasMatrix: boolean
 }
 
+export type SleepFixState = {
+  enabled: boolean
+  available: boolean
+  configuredIommuDisabled: boolean | null
+  runtimeIommuDisabled: boolean | null
+  rebootRequired: boolean
+  status: 'unavailable' | 'configuration_drift' | 'pending_reboot' | 'active' | 'disabled' | 'configured'
+  message: string
+}
+
 export type CleanupStepResult = {
   name: string
   ok: boolean
@@ -130,6 +140,7 @@ export type PluginSettings = {
   controllerModeAvailable: boolean
   homeButtonEnabled: boolean
   brightnessDialFixEnabled: boolean
+  sleepFix: SleepFixState
   gyroMountMatrixFix: GyroMountMatrixFixState
   trackpadMode: TrackpadMode
   zotacGlyphsEnabled: boolean
