@@ -70,7 +70,7 @@ Display changes require a reboot after toggling them. `HDR / Washed out colors` 
 | --------- | -------------- | ------- | ------ | ------- |
 | Fix Sleep | ❓             | ❌      | ❌      | ❌      |
 
-Fix Sleep removes SteamOS's `amd_iommu=off` boot argument, allowing AMD IOMMU on the ZOTAC ZONE. It requires a restart and reports both the saved GRUB configuration and whether the running kernel command line still disables AMD IOMMU.
+Fix Sleep removes SteamOS's `amd_iommu=off` boot argument, allowing AMD IOMMU on the ZOTAC ZONE. It requires a restart and reports the configured GRUB state and whether the running kernel command line still disables AMD IOMMU.
 
 ## Compatibility Notes
 
